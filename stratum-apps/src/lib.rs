@@ -64,7 +64,16 @@ pub mod utils;
 
 // Task orchestrator used in SRI apps.
 pub mod task_manager;
+
 /// Template provider type
 ///
 /// Provides the type of template provider that will be used.
 pub mod tp_type;
+
+/// Persistence abstractions for shares
+///
+/// Provides a generic persistence framework that can be used across different
+/// Stratum V2 roles with support for multiple backend implementations (file, SQLite, etc.).
+/// Features fire-and-forget semantics to avoid blocking the mining hot path.
+#[cfg(feature = "persistence")]
+pub mod persistence;
