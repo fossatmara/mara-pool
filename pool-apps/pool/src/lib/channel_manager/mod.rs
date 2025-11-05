@@ -11,6 +11,7 @@ use stratum_apps::{
     custom_mutex::Mutex,
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
     network_helpers::noise_stream::NoiseTcpStream,
+    persistence::{SharePersistence, FileHandler},
     stratum_core::{
         channels_sv2::{
             server::{
@@ -96,6 +97,7 @@ pub struct ChannelManager {
     supported_extensions: Vec<u16>,
     /// Protocol extensions that the pool requires (clients must support these).
     required_extensions: Vec<u16>,
+    persistence: SharePersistence<FileHandler>,
 }
 
 impl ChannelManager {
@@ -108,6 +110,7 @@ impl ChannelManager {
         downstream_sender: broadcast::Sender<(DownstreamId, Mining<'static>, Option<Vec<Tlv>>)>,
         downstream_receiver: Receiver<(DownstreamId, Mining<'static>, Option<Vec<Tlv>>)>,
         coinbase_outputs: Vec<u8>,
+        persistence: SharePersistence<FileHandler>,
     ) -> PoolResult<Self> {
         let range_0 = 0..0;
         let range_1 = 0..POOL_ALLOCATION_BYTES;
@@ -158,6 +161,7 @@ impl ChannelManager {
             coinbase_reward_script: config.coinbase_reward_script().clone(),
             supported_extensions: config.supported_extensions().to_vec(),
             required_extensions: config.required_extensions().to_vec(),
+            persistence,
         };
 
         Ok(channel_manager)

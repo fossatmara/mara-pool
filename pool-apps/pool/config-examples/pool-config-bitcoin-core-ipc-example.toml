@@ -40,6 +40,12 @@ required_extensions = [
     # 0x0002,
 ]
 
+# Persistence configuration (optional)
+# Uncomment to enable file-based persistence of share events
+# [persistence]
+# file_path = "./pool_shares.log"
+# channel_size = 10000  # Optional, defaults to 10000
+
 # Bitcoin Core IPC config
 [template_provider_type.BitcoinCoreIpc]
 unix_socket_path = "/path/to/node.sock"

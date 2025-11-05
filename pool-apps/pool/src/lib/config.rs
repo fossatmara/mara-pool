@@ -37,6 +37,21 @@ pub struct PoolConfig {
     server_id: u16,
     supported_extensions: Vec<u16>,
     required_extensions: Vec<u16>,
+    persistence: Option<PersistenceConfig>,
+}
+
+/// Persistence configuration for share event logging.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct PersistenceConfig {
+    /// Path to the persistence log file
+    pub file_path: PathBuf,
+    /// Channel buffer size for async persistence
+    #[serde(default = "default_channel_size")]
+    pub channel_size: usize,
+}
+
+fn default_channel_size() -> usize {
+    10000
 }
 
 impl PoolConfig {
@@ -56,6 +71,7 @@ impl PoolConfig {
         server_id: u16,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
+        persistence: Option<PersistenceConfig>,
     ) -> Self {
         Self {
             listen_address: pool_connection.listen_address,
@@ -71,6 +87,7 @@ impl PoolConfig {
             server_id,
             supported_extensions,
             required_extensions,
+            persistence,
         }
     }
 
@@ -148,6 +165,11 @@ impl PoolConfig {
     /// Returns the server id.
     pub fn server_id(&self) -> u16 {
         self.server_id
+    }
+
+    /// Returns the persistence configuration.
+    pub fn persistence(&self) -> Option<&PersistenceConfig> {
+        self.persistence.as_ref()
     }
 
     pub fn get_txout(&self) -> TxOut {
