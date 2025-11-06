@@ -124,6 +124,7 @@ pub async fn start_pool(
         1,
         supported_extensions,
         required_extensions,
+        None,
     );
     let pool = PoolSv2::new(config);
     let pool_clone = pool.clone();
