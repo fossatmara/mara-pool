@@ -15,7 +15,9 @@ use crate::{
     error::PoolError,
 };
 
-impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
+impl<P: stratum_apps::persistence::SharePersistenceHandler>
+    HandleTemplateDistributionMessagesFromServerAsync for ChannelManager<P>
+{
     type Error = PoolError;
 
     fn get_negotiated_extensions_with_server(
