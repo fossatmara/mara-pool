@@ -106,6 +106,8 @@ pub enum PoolError {
     FailedToSendCoinbaseOutputConstraints,
     /// BitcoinCoreSv2 cancellation token activated
     BitcoinCoreSv2CancellationTokenActivated,
+    /// Persistence error
+    PersistenceError(String),
 }
 
 impl std::fmt::Display for PoolError {
@@ -189,6 +191,7 @@ impl std::fmt::Display for PoolError {
             BitcoinCoreSv2CancellationTokenActivated => {
                 write!(f, "BitcoinCoreSv2 cancellation token activated")
             }
+            PersistenceError(e) => write!(f, "Persistence error: {e}"),
         }
     }
 }

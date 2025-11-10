@@ -2,9 +2,8 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use async_channel::unbounded;
 use bitcoin_core_sv2::CancellationToken;
-#[cfg(feature = "persistence")]
-use stratum_apps::persistence::{DefaultHandler, FileHandler};
 use stratum_apps::{
+    persistence::Persistence,
     stratum_core::{bitcoin::consensus::Encodable, parsers_sv2::TemplateDistribution},
     task_manager::TaskManager,
     tp_type::TemplateProviderType,
@@ -75,29 +74,19 @@ impl PoolSv2 {
 
         debug!("Channels initialized.");
 
-        // Initialize persistence handler based on feature flag
+        // Initialize persistence using the new trait-based approach
         #[cfg(feature = "persistence")]
-        let persistence: DefaultHandler = {
-            match self.config.persistence() {
-                Some(config) => {
-                    match FileHandler::new(config.file_path.clone(), config.channel_size) {
-                        Ok(handler) => {
-                            info!(
-                                "Persistence enabled: file_path={}, channel_size={}",
-                                config.file_path.display(),
-                                config.channel_size
-                            );
-                            handler
-                        }
-                        Err(e) => {
-                            // If file handler fails, we need to panic or return error
-                            // since DefaultHandler = FileHandler, we can't fall back to no-op
-                            panic!("Failed to initialize persistence: {}", e);
-                        }
-                    }
+        let persistence = {
+            match Persistence::new(self.config.persistence().cloned()) {
+                Ok(p) => {
+                    info!("Persistence initialized: {:?}", p);
+                    p
                 }
-                None => {
-                    panic!("Persistence feature enabled but not configured in config file");
+                Err(e) => {
+                    return Err(crate::error::PoolError::PersistenceError(format!(
+                        "Failed to initialize persistence: {}",
+                        e
+                    )));
                 }
             }
         };
@@ -105,9 +94,7 @@ impl PoolSv2 {
         #[cfg(not(feature = "persistence"))]
         let persistence = {
             info!("Persistence disabled (feature not enabled).");
-            // When feature disabled, just use NoOpHandler directly
-            use stratum_apps::persistence::NoOpHandler;
-            NoOpHandler
+            Persistence::noop()
         };
 
         let channel_manager = ChannelManager::new(
