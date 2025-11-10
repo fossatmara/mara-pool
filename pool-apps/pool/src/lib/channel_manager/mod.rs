@@ -11,7 +11,7 @@ use stratum_apps::{
     custom_mutex::Mutex,
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
     network_helpers::noise_stream::NoiseTcpStream,
-    persistence::{DefaultHandler, SharePersistenceHandler},
+    persistence::Persistence,
     stratum_core::{
         channels_sv2::{
             server::{
@@ -85,12 +85,8 @@ pub struct ChannelManagerChannel {
 /// Contains all the state of mutable and immutable data required
 /// by channel manager to process its task along with channels
 /// to perform message traversal.
-///
-/// # Type Parameters
-///
-/// * `P` - The persistence handler type (defaults to `DefaultHandler`)
 #[derive(Clone)]
-pub struct ChannelManager<P: SharePersistenceHandler + 'static = DefaultHandler> {
+pub struct ChannelManager {
     channel_manager_data: Arc<Mutex<ChannelManagerData>>,
     channel_manager_channel: ChannelManagerChannel,
     pool_tag_string: String,
@@ -101,10 +97,10 @@ pub struct ChannelManager<P: SharePersistenceHandler + 'static = DefaultHandler>
     supported_extensions: Vec<u16>,
     /// Protocol extensions that the pool requires (clients must support these).
     required_extensions: Vec<u16>,
-    persistence: P,
+    persistence: Persistence,
 }
 
-impl<P: SharePersistenceHandler> ChannelManager<P> {
+impl ChannelManager {
     /// Constructor method used to instantiate the ChannelManager
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -114,7 +110,7 @@ impl<P: SharePersistenceHandler> ChannelManager<P> {
         downstream_sender: broadcast::Sender<(DownstreamId, Mining<'static>, Option<Vec<Tlv>>)>,
         downstream_receiver: Receiver<(DownstreamId, Mining<'static>, Option<Vec<Tlv>>)>,
         coinbase_outputs: Vec<u8>,
-        persistence: P,
+        persistence: Persistence,
     ) -> PoolResult<Self> {
         let range_0 = 0..0;
         let range_1 = 0..POOL_ALLOCATION_BYTES;
