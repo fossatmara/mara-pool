@@ -4,7 +4,7 @@ use stratum_apps::{
     extensions_sv2::{
         UserIdentity, EXTENSION_TYPE_WORKER_HASHRATE_TRACKING, TLV_FIELD_TYPE_USER_IDENTITY,
     },
-    persistence::{ShareEvent, PersistenceEvent},
+    persistence::{PersistenceEvent, ShareEvent},
     stratum_core::{
         binary_sv2::Str0255,
         bitcoin::{consensus::Decodable, Amount, Target, TxOut},
