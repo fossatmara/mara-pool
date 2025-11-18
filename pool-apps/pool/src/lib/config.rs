@@ -8,11 +8,15 @@
 //! - Managing [`TemplateProviderConfig`], [`AuthorityConfig`], [`CoinbaseOutput`], and
 //!   [`ConnectionConfig`]
 //! - Validating and converting coinbase outputs
+#[cfg(feature = "persistence")]
+use std::sync::Arc;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
 };
 
+#[cfg(feature = "persistence")]
+use stratum_apps::task_manager::TaskManager;
 use stratum_apps::{
     config_helpers::CoinbaseRewardScript,
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
@@ -83,7 +87,7 @@ fn default_entities() -> Vec<String> {
 /// Implement IntoPersistence trait for pool's config type
 #[cfg(feature = "persistence")]
 impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
-    fn into_persistence(self) -> Result<stratum_apps::persistence::Persistence, stratum_apps::persistence::Error> {
+    fn into_persistence(self, task_manager: Arc<TaskManager>) -> Result<stratum_apps::persistence::Persistence, stratum_apps::persistence::Error> {
         use stratum_apps::persistence::{Backend, EntityType, FileBackend, Persistence};
         
         // Parse entity types
@@ -108,7 +112,7 @@ impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
                         "[persistence.file] section required for file backend".to_string()
                     ))?;
                 
-                Backend::File(FileBackend::new(file_config.file_path, file_config.channel_size)?)
+                Backend::File(FileBackend::new(file_config.file_path, file_config.channel_size, task_manager)?)
             }
             // Future: Add more backends here
             // "sqlite" => {
@@ -308,8 +312,11 @@ mod tests {
             }),
         };
 
+        // Create a TaskManager for the test
+        let task_manager = Arc::new(TaskManager::new());
+
         // Test that config can be converted to Persistence
-        let result = config.into_persistence();
+        let result = config.into_persistence(task_manager);
         assert!(result.is_ok());
         
         // Clean up test file if created
@@ -327,8 +334,11 @@ mod tests {
             file: None, // Missing file config
         };
 
+        // Create a TaskManager for the test
+        let task_manager = Arc::new(TaskManager::new());
+
         // Should fail because file backend requires [persistence.file] section
-        let result = config.into_persistence();
+        let result = config.into_persistence(task_manager);
         assert!(result.is_err());
         let err_msg = format!("{:?}", result.unwrap_err());
         assert!(err_msg.contains("[persistence.file] section required"));
@@ -349,8 +359,11 @@ mod tests {
             }),
         };
 
+        // Create a TaskManager for the test
+        let task_manager = Arc::new(TaskManager::new());
+
         // Should fail with unknown backend error
-        let result = config.into_persistence();
+        let result = config.into_persistence(task_manager);
         assert!(result.is_err());
         let err_msg = format!("{:?}", result.unwrap_err());
         assert!(err_msg.contains("Unknown backend type"));
@@ -374,8 +387,11 @@ mod tests {
             }),
         };
 
+        // Create a TaskManager for the test
+        let task_manager = Arc::new(TaskManager::new());
+
         // Should succeed and filter out unknown entities
-        let result = config.into_persistence();
+        let result = config.into_persistence(task_manager);
         assert!(result.is_ok());
     }
 
@@ -408,7 +424,10 @@ mod tests {
             }),
         };
 
-        let result = config.into_persistence();
+        // Create a TaskManager for the test
+        let task_manager = Arc::new(TaskManager::new());
+
+        let result = config.into_persistence(task_manager);
         assert!(result.is_ok());
         
         // Clean up
