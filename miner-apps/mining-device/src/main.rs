@@ -1,6 +1,7 @@
 #![allow(special_module_name)]
 #![allow(clippy::option_map_unit_fn)]
 use key_utils::Secp256k1PublicKey;
+use stratum_apps::panic_hook::install_panic_hook;
 
 use clap::Parser;
 use tracing::info;
@@ -62,6 +63,7 @@ struct Args {
 async fn main() {
     let args = Args::parse();
     tracing_subscriber::fmt::init();
+    install_panic_hook();
     info!("start");
     // Configure micro-batch size
     mining_device::set_nonces_per_call(args.nonces_per_call);

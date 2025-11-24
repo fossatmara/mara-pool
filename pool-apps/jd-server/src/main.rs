@@ -8,6 +8,7 @@ mod args;
 use args::process_cli_args;
 use config_helpers_sv2::logging::init_logging;
 use jd_server::JobDeclaratorServer;
+use stratum_apps::panic_hook::install_panic_hook;
 use tracing::error;
 
 /// Entrypoint for the Job Declarator Server binary.
@@ -24,5 +25,6 @@ async fn main() {
         }
     };
     init_logging(config.log_file());
+    install_panic_hook();
     let _ = JobDeclaratorServer::new(config).start().await;
 }

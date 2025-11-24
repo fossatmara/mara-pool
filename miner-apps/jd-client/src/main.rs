@@ -1,5 +1,6 @@
 use jd_client_sv2::JobDeclaratorClient;
 use stratum_apps::config_helpers::logging::init_logging;
+use stratum_apps::panic_hook::install_panic_hook;
 
 use crate::args::process_cli_args;
 
@@ -13,5 +14,6 @@ async fn main() {
     });
 
     init_logging(jdc_config.log_file());
+    install_panic_hook();
     JobDeclaratorClient::new(jdc_config).start().await;
 }

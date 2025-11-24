@@ -81,3 +81,9 @@ pub mod tp_type;
 /// Features fire-and-forget semantics to avoid blocking the mining hot path.
 #[cfg(feature = "persistence")]
 pub mod persistence;
+
+/// Panic hook utilities for capturing detailed crash information
+///
+/// Provides a standardized panic hook that logs panic location, message,
+/// and full backtrace before the process terminates.
+pub mod panic_hook;
