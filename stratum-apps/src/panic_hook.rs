@@ -17,12 +17,9 @@
 /// # Example
 ///
 /// ```no_run
-/// use stratum_apps::panic_hook::install_panic_hook;
-///
-/// fn main() {
-///     install_panic_hook();
-///     // ... rest of your application
-/// }
+/// # use stratum_apps::panic_hook::install_panic_hook;
+/// install_panic_hook();
+/// // ... rest of your application
 /// ```
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
