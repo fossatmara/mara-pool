@@ -34,6 +34,7 @@ sha2 = { version = "0.10.6", features = ["compress", "asm"] }
 tokio = "1.44.1"
 primitive-types = "0.13.1"
 num-format = "0.4"
+stratum-apps = { path = "../../stratum-apps" }
 
 [dev-dependencies]
 # Criterion 0.5 without default features; combined with a dev pin of `half = 2.3.1` to stay Rust 1.75-compatible.
