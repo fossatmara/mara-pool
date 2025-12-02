@@ -28,6 +28,10 @@
 #[cfg(feature = "core")]
 pub use stratum_core;
 
+/// Re-export extensions_sv2 from stratum_core for convenient access
+#[cfg(feature = "core")]
+pub use stratum_core::extensions_sv2;
+
 /// High-level networking utilities for SV2 connections
 ///
 /// Provides connection management, encrypted streams, and protocol handling.
