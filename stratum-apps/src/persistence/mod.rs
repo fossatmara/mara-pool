@@ -20,6 +20,8 @@
 pub mod file;
 // #[cfg(feature = "persistence")]
 // pub mod sqlite;
+#[cfg(feature = "metrics")]
+pub mod metrics;
 pub mod noop;
 
 #[cfg(feature = "persistence")]
@@ -32,6 +34,8 @@ use stratum_core::bitcoin::hashes::sha256d::Hash;
 pub use file::FileBackend;
 // #[cfg(feature = "persistence")]
 // pub use sqlite::SqliteBackend;
+#[cfg(feature = "metrics")]
+pub use metrics::MetricsBackend;
 pub use noop::NoOpBackend;
 
 #[cfg(feature = "persistence")]
@@ -117,6 +121,8 @@ pub trait PersistenceBackend: Send + Sync + std::fmt::Debug + Clone {
 pub enum Backend {
     File(FileBackend),
     // Sqlite(SqliteBackend),
+    #[cfg(feature = "metrics")]
+    Metrics(MetricsBackend),
     NoOp(NoOpBackend),
 }
 
@@ -264,6 +270,8 @@ impl Persistence {
                 Backend::File(b) => b.persist_event(event),
                 // #[cfg(feature = "persistence")]
                 // Backend::Sqlite(b) => b.persist_event(event),
+                #[cfg(feature = "metrics")]
+                Backend::Metrics(b) => b.persist_event(event),
                 Backend::NoOp(b) => b.persist_event(event),
             }
         }
@@ -275,6 +283,8 @@ impl Persistence {
             Backend::File(b) => b.flush(),
             // #[cfg(feature = "persistence")]
             // Backend::Sqlite(b) => b.flush(),
+            #[cfg(feature = "metrics")]
+            Backend::Metrics(b) => b.flush(),
             Backend::NoOp(b) => b.flush(),
         }
     }
@@ -285,6 +295,8 @@ impl Persistence {
             Backend::File(b) => b.shutdown(),
             // #[cfg(feature = "persistence")]
             // Backend::Sqlite(b) => b.shutdown(),
+            #[cfg(feature = "metrics")]
+            Backend::Metrics(b) => b.shutdown(),
             Backend::NoOp(b) => b.shutdown(),
         }
     }
@@ -298,6 +310,8 @@ impl Clone for Persistence {
                 Backend::File(b) => Backend::File(b.clone()),
                 // #[cfg(feature = "persistence")]
                 // Backend::Sqlite(b) => Backend::Sqlite(b.clone()),
+                #[cfg(feature = "metrics")]
+                Backend::Metrics(b) => Backend::Metrics(b.clone()),
                 Backend::NoOp(b) => Backend::NoOp(*b),
             },
             enabled_entities: self.enabled_entities.clone(),
@@ -317,6 +331,12 @@ impl std::fmt::Debug for Persistence {
             // #[cfg(feature = "persistence")]
             // Backend::Sqlite(_) => write!(f, "Persistence(Sqlite, entities: {:?})",
             // self.enabled_entities),
+            #[cfg(feature = "metrics")]
+            Backend::Metrics(_) => write!(
+                f,
+                "Persistence(Metrics, entities: {:?})",
+                self.enabled_entities
+            ),
             Backend::NoOp(_) => write!(f, "Persistence(NoOp)"),
         }
     }

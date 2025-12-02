@@ -56,6 +56,16 @@ pub struct FileBackendConfig {
     pub channel_size: usize,
 }
 
+/// Metrics backend configuration (Prometheus)
+#[cfg(feature = "metrics")]
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct MetricsBackendConfig {
+    /// HTTP endpoint path for Prometheus scraping
+    pub resource_path: String,
+    /// Port for metrics HTTP server
+    pub port: u16,
+}
+
 /// Persistence configuration for share event logging.
 ///
 /// This is only available when the `persistence` feature is enabled.
@@ -70,6 +80,10 @@ pub struct PersistenceConfig {
     /// File backend configuration (only used when backend = "file")
     #[serde(default)]
     pub file: Option<FileBackendConfig>,
+    /// Metrics backend configuration (only used when backend = "metrics")
+    #[cfg(feature = "metrics")]
+    #[serde(default)]
+    pub metrics: Option<MetricsBackendConfig>,
     // Future: Add more backend configs
     // pub sqlite: Option<SqliteBackendConfig>,
 }
@@ -91,6 +105,8 @@ impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
         self,
         task_manager: Arc<TaskManager>,
     ) -> Result<stratum_apps::persistence::Persistence, stratum_apps::persistence::Error> {
+        #[cfg(feature = "metrics")]
+        use stratum_apps::persistence::MetricsBackend;
         use stratum_apps::persistence::{Backend, EntityType, FileBackend, Persistence};
 
         // Parse entity types
@@ -119,6 +135,20 @@ impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
                 Backend::File(FileBackend::new(
                     file_config.file_path,
                     file_config.channel_size,
+                    task_manager,
+                )?)
+            }
+            #[cfg(feature = "metrics")]
+            "metrics" => {
+                let metrics_config = self.metrics.ok_or_else(|| {
+                    stratum_apps::persistence::Error::Custom(
+                        "[persistence.metrics] section required for metrics backend".to_string(),
+                    )
+                })?;
+
+                Backend::Metrics(MetricsBackend::new(
+                    metrics_config.resource_path.into(),
+                    metrics_config.port,
                     task_manager,
                 )?)
             }
