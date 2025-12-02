@@ -183,11 +183,11 @@ async fn test_extension_negotiation_with_tlv_in_submit_shares() {
                     );
                 } else {
                     // If not UTF-8, just log hex representation
-                    let hex_str = tlv
-                        .value
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<String>();
+                    use std::fmt::Write;
+                    let hex_str = tlv.value.iter().fold(String::new(), |mut output, b| {
+                        let _ = write!(output, "{b:02x}");
+                        output
+                    });
                     info!("✅ user_identity TLV payload (hex): {}", hex_str);
                 }
             }
