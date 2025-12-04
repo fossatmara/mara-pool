@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: "sv2-apps"
+    orgId: 1
+    folder: "sv2"
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
