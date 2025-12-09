@@ -11,7 +11,7 @@ use axum::{
     Router,
 };
 #[cfg(feature = "metrics")]
-use prometheus::{Encoder, IntCounterVec, Opts, TextEncoder};
+use prometheus::{CounterVec, Encoder, GaugeVec, IntCounterVec, Opts, TextEncoder};
 #[cfg(feature = "metrics")]
 use std::net::SocketAddr;
 
@@ -44,6 +44,30 @@ lazy_static::lazy_static! {
             .namespace("stratum"),
         &["user_identity"]
     ).expect("Failed to create BLOCKS_FOUND_TOTAL metric");
+
+    /// Counter for cumulative share work in hashes (used to compute hashrate)
+    /// Labels: user_identity
+    static ref SHARE_WORK_TOTAL: CounterVec = CounterVec::new(
+        Opts::new("pool_share_work_total", "Cumulative share work in hashes")
+            .namespace("stratum"),
+        &["user_identity"]
+    ).expect("Failed to create SHARE_WORK_TOTAL metric");
+
+    /// Gauge for current share difficulty per user (tracks difficulty adjustment convergence)
+    /// Labels: user_identity
+    static ref SHARE_DIFFICULTY: GaugeVec = GaugeVec::new(
+        Opts::new("pool_share_difficulty", "Current share difficulty")
+            .namespace("stratum"),
+        &["user_identity"]
+    ).expect("Failed to create SHARE_DIFFICULTY metric");
+
+    /// Gauge for miner's estimated (nominal) hashrate in H/s
+    /// Labels: user_identity
+    static ref ESTIMATED_HASHRATE: GaugeVec = GaugeVec::new(
+        Opts::new("pool_estimated_hashrate", "Miner estimated hashrate in H/s")
+            .namespace("stratum"),
+        &["user_identity"]
+    ).expect("Failed to create ESTIMATED_HASHRATE metric");
 }
 
 /// Register all metrics with the default Prometheus registry
@@ -55,6 +79,9 @@ fn register_metrics() {
     let _ = registry.register(Box::new(SHARES_VALID_TOTAL.clone()));
     let _ = registry.register(Box::new(SHARES_INVALID_TOTAL.clone()));
     let _ = registry.register(Box::new(BLOCKS_FOUND_TOTAL.clone()));
+    let _ = registry.register(Box::new(SHARE_WORK_TOTAL.clone()));
+    let _ = registry.register(Box::new(SHARE_DIFFICULTY.clone()));
+    let _ = registry.register(Box::new(ESTIMATED_HASHRATE.clone()));
 
     tracing::debug!("Prometheus metrics registered");
 }
@@ -114,6 +141,22 @@ impl PersistenceBackend for MetricsBackend {
                     SHARES_VALID_TOTAL
                         .with_label_values(&[user, &template_id])
                         .inc();
+
+                    // Track cumulative share work for hashrate calculation
+                    // share_work is difficulty; hashes = difficulty * 2^32
+                    const HASHES_PER_DIFF: f64 = 4_294_967_296.0; // 2^32
+                    let hashes = share.share_work * HASHES_PER_DIFF;
+                    SHARE_WORK_TOTAL.with_label_values(&[user]).inc_by(hashes);
+
+                    // Track current share difficulty (for convergence monitoring)
+                    SHARE_DIFFICULTY
+                        .with_label_values(&[user])
+                        .set(share.share_work);
+
+                    // Track miner's estimated hashrate in H/s
+                    ESTIMATED_HASHRATE
+                        .with_label_values(&[user])
+                        .set(share.nominal_hash_rate as f64);
 
                     // Check if this share found a block
                     if share.is_block_found {
