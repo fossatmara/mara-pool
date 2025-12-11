@@ -439,4 +439,205 @@ mod tests {
         assert!(PersistenceBackend::persist_event(&cloned, event).is_ok());
         assert_eq!(backend.count(), 2);
     }
+
+    #[test]
+    fn test_composite_flush_all_routes() {
+        let backend1 = Arc::new(CountingBackend::new());
+        let backend2 = Arc::new(CountingBackend::new());
+
+        let routes = vec![
+            BackendRoute::new("backend1", backend1.clone(), vec![EntityType::Share]),
+            BackendRoute::new("backend2", backend2.clone(), vec![EntityType::Share]),
+        ];
+
+        let composite = CompositeBackend::new(routes);
+        assert!(PersistenceBackend::flush(&composite).is_ok());
+    }
+
+    #[test]
+    fn test_composite_shutdown_all_routes() {
+        let backend1 = Arc::new(CountingBackend::new());
+        let backend2 = Arc::new(CountingBackend::new());
+
+        let routes = vec![
+            BackendRoute::new("backend1", backend1.clone(), vec![EntityType::Share]),
+            BackendRoute::new("backend2", backend2.clone(), vec![EntityType::Share]),
+        ];
+
+        let composite = CompositeBackend::new(routes);
+        assert!(PersistenceBackend::shutdown(&composite).is_ok());
+    }
+
+    #[test]
+    fn test_composite_empty_routes() {
+        let composite = CompositeBackend::new(vec![]);
+        let event = create_test_event();
+
+        // Should succeed even with no routes
+        assert!(PersistenceBackend::persist_event(&composite, event).is_ok());
+        assert_eq!(composite.route_count(), 0);
+    }
+
+    #[test]
+    fn test_composite_fallback_chain() {
+        // Test a chain: primary -> fallback1 (fails) -> fallback2 (succeeds)
+        // Note: Current implementation only supports single fallback, not chains
+        // This test verifies the single fallback behavior
+        let primary = Arc::new(CountingBackend::failing());
+        let fallback = Arc::new(CountingBackend::new());
+
+        let route = BackendRoute::new("test", primary.clone(), vec![EntityType::Share])
+            .with_fallback(fallback.clone());
+
+        let composite = CompositeBackend::new(vec![route]);
+
+        // Send multiple events
+        for _ in 0..5 {
+            let event = create_test_event();
+            assert!(PersistenceBackend::persist_event(&composite, event).is_ok());
+        }
+
+        assert_eq!(primary.count(), 5); // All attempts hit primary
+        assert_eq!(fallback.count(), 5); // All fell back
+    }
+
+    #[test]
+    fn test_composite_both_primary_and_fallback_fail() {
+        let primary = Arc::new(CountingBackend::failing());
+        let fallback = Arc::new(CountingBackend::failing());
+
+        let route = BackendRoute::new("test", primary.clone(), vec![EntityType::Share])
+            .with_fallback(fallback.clone());
+
+        let composite = CompositeBackend::new(vec![route]);
+        let event = create_test_event();
+
+        // Should return Err when both primary and fallback fail
+        // This allows the caller to know the event was not persisted
+        let result = PersistenceBackend::persist_event(&composite, event);
+        assert!(result.is_err());
+        assert_eq!(primary.count(), 1);
+        assert_eq!(fallback.count(), 1);
+    }
+
+    #[test]
+    fn test_backend_route_handles() {
+        let backend = Arc::new(NoOpBackend::new());
+        let route = BackendRoute::new("test", backend, vec![EntityType::Share]);
+
+        assert!(route.handles(EntityType::Share));
+        // Note: Currently only Share entity type exists
+    }
+
+    #[test]
+    fn test_backend_route_empty_entities_handles_nothing() {
+        let backend = Arc::new(NoOpBackend::new());
+        let route = BackendRoute::new("test", backend, vec![]);
+
+        assert!(!route.handles(EntityType::Share));
+    }
+
+    #[test]
+    fn test_composite_multiple_routes_independent_failures() {
+        // Route 1: fails, has fallback
+        // Route 2: succeeds
+        // Both should be attempted independently
+        let primary1 = Arc::new(CountingBackend::failing());
+        let fallback1 = Arc::new(CountingBackend::new());
+        let backend2 = Arc::new(CountingBackend::new());
+
+        let routes = vec![
+            BackendRoute::new("route1", primary1.clone(), vec![EntityType::Share])
+                .with_fallback(fallback1.clone()),
+            BackendRoute::new("route2", backend2.clone(), vec![EntityType::Share]),
+        ];
+
+        let composite = CompositeBackend::new(routes);
+        let event = create_test_event();
+
+        assert!(PersistenceBackend::persist_event(&composite, event).is_ok());
+        assert_eq!(primary1.count(), 1); // Tried
+        assert_eq!(fallback1.count(), 1); // Used as fallback
+        assert_eq!(backend2.count(), 1); // Independent, succeeded
+    }
+
+    /// A backend that tracks flush and shutdown calls
+    #[derive(Debug)]
+    struct LifecycleTrackingBackend {
+        flush_count: AtomicUsize,
+        shutdown_count: AtomicUsize,
+    }
+
+    impl LifecycleTrackingBackend {
+        fn new() -> Self {
+            Self {
+                flush_count: AtomicUsize::new(0),
+                shutdown_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn flush_count(&self) -> usize {
+            self.flush_count.load(Ordering::SeqCst)
+        }
+
+        fn shutdown_count(&self) -> usize {
+            self.shutdown_count.load(Ordering::SeqCst)
+        }
+    }
+
+    impl PersistenceBackend for LifecycleTrackingBackend {
+        fn persist_event(&self, _event: PersistenceEvent) -> Result<(), PersistenceError> {
+            Ok(())
+        }
+
+        fn flush(&self) -> Result<(), PersistenceError> {
+            self.flush_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), PersistenceError> {
+            self.shutdown_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_composite_flush_calls_all_backends() {
+        let backend1 = Arc::new(LifecycleTrackingBackend::new());
+        let backend2 = Arc::new(LifecycleTrackingBackend::new());
+        let fallback = Arc::new(LifecycleTrackingBackend::new());
+
+        let routes = vec![
+            BackendRoute::new("route1", backend1.clone(), vec![EntityType::Share])
+                .with_fallback(fallback.clone()),
+            BackendRoute::new("route2", backend2.clone(), vec![EntityType::Share]),
+        ];
+
+        let composite = CompositeBackend::new(routes);
+        assert!(PersistenceBackend::flush(&composite).is_ok());
+
+        assert_eq!(backend1.flush_count(), 1);
+        assert_eq!(backend2.flush_count(), 1);
+        assert_eq!(fallback.flush_count(), 1);
+    }
+
+    #[test]
+    fn test_composite_shutdown_calls_all_backends() {
+        let backend1 = Arc::new(LifecycleTrackingBackend::new());
+        let backend2 = Arc::new(LifecycleTrackingBackend::new());
+        let fallback = Arc::new(LifecycleTrackingBackend::new());
+
+        let routes = vec![
+            BackendRoute::new("route1", backend1.clone(), vec![EntityType::Share])
+                .with_fallback(fallback.clone()),
+            BackendRoute::new("route2", backend2.clone(), vec![EntityType::Share]),
+        ];
+
+        let composite = CompositeBackend::new(routes);
+        assert!(PersistenceBackend::shutdown(&composite).is_ok());
+
+        assert_eq!(backend1.shutdown_count(), 1);
+        assert_eq!(backend2.shutdown_count(), 1);
+        assert_eq!(fallback.shutdown_count(), 1);
+    }
 }
