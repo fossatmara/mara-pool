@@ -17,6 +17,8 @@
 //! - **Without feature:** Always uses `NoOpBackend` (zero-cost, optimized away by compiler)
 
 #[cfg(feature = "persistence")]
+pub mod composite;
+#[cfg(feature = "persistence")]
 pub mod file;
 // #[cfg(feature = "persistence")]
 // pub mod sqlite;
@@ -30,6 +32,8 @@ use std::time::SystemTime;
 
 use stratum_core::bitcoin::hashes::sha256d::Hash;
 
+#[cfg(feature = "persistence")]
+pub use composite::{BackendRoute, CompositeBackend};
 #[cfg(feature = "persistence")]
 pub use file::FileBackend;
 // #[cfg(feature = "persistence")]
@@ -47,6 +51,48 @@ pub enum EntityType {
     Share,
     // Connection,
 }
+
+impl PersistenceEvent {
+    /// Returns the entity type for this event
+    pub fn entity_type(&self) -> EntityType {
+        match self {
+            PersistenceEvent::Share(_) => EntityType::Share,
+            // PersistenceEvent::Connection(_) => EntityType::Connection,
+        }
+    }
+}
+
+/// Errors that can occur during persistence operations
+#[derive(Debug, Clone)]
+pub enum PersistenceError {
+    /// The internal channel is full and cannot accept more events
+    ChannelFull,
+    /// An I/O error occurred
+    Io(String),
+    /// A connection error occurred (e.g., database connection)
+    Connection(String),
+    /// An encoding/serialization error occurred
+    Encoding(String),
+    /// The backend has been shut down
+    Shutdown,
+    /// A custom error message
+    Custom(String),
+}
+
+impl std::fmt::Display for PersistenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PersistenceError::ChannelFull => write!(f, "Persistence channel is full"),
+            PersistenceError::Io(msg) => write!(f, "IO error: {}", msg),
+            PersistenceError::Connection(msg) => write!(f, "Connection error: {}", msg),
+            PersistenceError::Encoding(msg) => write!(f, "Encoding error: {}", msg),
+            PersistenceError::Shutdown => write!(f, "Backend has been shut down"),
+            PersistenceError::Custom(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for PersistenceError {}
 
 /// Generic event that can be persisted
 #[derive(Debug, Clone)]
@@ -89,28 +135,46 @@ pub struct ShareEvent {
 
 /// Trait for handling persistence of share events.
 ///
-/// Implementations of this trait handle the actual persistence operations,
-/// ensuring that persistence operations are non-blocking and can handle failures internally.
-pub trait PersistenceBackend: Send + Sync + std::fmt::Debug + Clone {
+/// Implementations of this trait handle the actual persistence operations.
+/// All methods return `Result` to enable error handling and fallback chains
+/// in composite backends.
+pub trait PersistenceBackend: Send + Sync + std::fmt::Debug {
     /// Sends a share event for persistence.
     ///
-    /// This method MUST be non-blocking and infallible from the caller's perspective.
+    /// This method SHOULD be non-blocking. Returns an error if the event
+    /// could not be persisted (e.g., channel full, connection error).
     ///
     /// # Arguments
     ///
     /// * `event` - The persistence event to persist
-    fn persist_event(&self, event: PersistenceEvent);
+    ///
+    /// # Errors
+    ///
+    /// Returns `PersistenceError` if the event could not be persisted.
+    fn persist_event(&self, event: PersistenceEvent) -> Result<(), PersistenceError>;
 
-    /// Optional method to flush any pending events.
+    /// Flush any pending events.
     ///
     /// This is a hint that the caller would like any buffered events to be processed
-    /// immediately, but implementations are free to ignore this if not applicable.
-    fn flush(&self) {}
-
-    /// Optional method called when the persistence handler is being dropped.
+    /// immediately. Implementations may ignore this if not applicable.
     ///
-    /// Implementations can use this for cleanup operations, but should not block.
-    fn shutdown(&self) {}
+    /// # Errors
+    ///
+    /// Returns `PersistenceError` if flush fails.
+    fn flush(&self) -> Result<(), PersistenceError> {
+        Ok(())
+    }
+
+    /// Called when the persistence handler is being shut down.
+    ///
+    /// Implementations should use this for cleanup operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PersistenceError` if shutdown fails.
+    fn shutdown(&self) -> Result<(), PersistenceError> {
+        Ok(())
+    }
 }
 
 /// Backend implementation selector
@@ -119,6 +183,7 @@ pub trait PersistenceBackend: Send + Sync + std::fmt::Debug + Clone {
 /// Applications implementing `IntoPersistence` will construct variants of this enum.
 #[cfg(feature = "persistence")]
 pub enum Backend {
+    Composite(CompositeBackend),
     File(FileBackend),
     // Sqlite(SqliteBackend),
     #[cfg(feature = "metrics")]
@@ -257,47 +322,66 @@ impl Persistence {
     }
 
     /// Persist an event (checks if entity type is enabled)
+    ///
+    /// Errors from the backend are logged but not propagated, as persistence
+    /// should not block the hot path. For error handling with fallbacks,
+    /// use the `CompositeBackend`.
     #[inline]
     pub fn persist(&self, event: PersistenceEvent) {
-        let entity_type = match &event {
-            PersistenceEvent::Share(_) => EntityType::Share,
-            // PersistenceEvent::Connection(_) => EntityType::Connection,
-        };
+        let entity_type = event.entity_type();
 
         if self.enabled_entities.contains(&entity_type) {
-            match &self.backend {
+            let result = match &self.backend {
                 #[cfg(feature = "persistence")]
-                Backend::File(b) => b.persist_event(event),
+                Backend::Composite(b) => PersistenceBackend::persist_event(b, event),
+                #[cfg(feature = "persistence")]
+                Backend::File(b) => PersistenceBackend::persist_event(b, event),
                 // #[cfg(feature = "persistence")]
-                // Backend::Sqlite(b) => b.persist_event(event),
+                // Backend::Sqlite(b) => PersistenceBackend::persist_event(b, event),
                 #[cfg(feature = "metrics")]
-                Backend::Metrics(b) => b.persist_event(event),
-                Backend::NoOp(b) => b.persist_event(event),
+                Backend::Metrics(b) => PersistenceBackend::persist_event(b, event),
+                Backend::NoOp(b) => PersistenceBackend::persist_event(b, event),
+            };
+
+            if let Err(e) = result {
+                tracing::warn!("Persistence error: {}", e);
             }
         }
     }
 
     pub fn flush(&self) {
-        match &self.backend {
+        let result = match &self.backend {
             #[cfg(feature = "persistence")]
-            Backend::File(b) => b.flush(),
+            Backend::Composite(b) => PersistenceBackend::flush(b),
+            #[cfg(feature = "persistence")]
+            Backend::File(b) => PersistenceBackend::flush(b),
             // #[cfg(feature = "persistence")]
-            // Backend::Sqlite(b) => b.flush(),
+            // Backend::Sqlite(b) => PersistenceBackend::flush(b),
             #[cfg(feature = "metrics")]
-            Backend::Metrics(b) => b.flush(),
-            Backend::NoOp(b) => b.flush(),
+            Backend::Metrics(b) => PersistenceBackend::flush(b),
+            Backend::NoOp(b) => PersistenceBackend::flush(b),
+        };
+
+        if let Err(e) = result {
+            tracing::warn!("Persistence flush error: {}", e);
         }
     }
 
     pub fn shutdown(&self) {
-        match &self.backend {
+        let result = match &self.backend {
             #[cfg(feature = "persistence")]
-            Backend::File(b) => b.shutdown(),
+            Backend::Composite(b) => PersistenceBackend::shutdown(b),
+            #[cfg(feature = "persistence")]
+            Backend::File(b) => PersistenceBackend::shutdown(b),
             // #[cfg(feature = "persistence")]
-            // Backend::Sqlite(b) => b.shutdown(),
+            // Backend::Sqlite(b) => PersistenceBackend::shutdown(b),
             #[cfg(feature = "metrics")]
-            Backend::Metrics(b) => b.shutdown(),
-            Backend::NoOp(b) => b.shutdown(),
+            Backend::Metrics(b) => PersistenceBackend::shutdown(b),
+            Backend::NoOp(b) => PersistenceBackend::shutdown(b),
+        };
+
+        if let Err(e) = result {
+            tracing::warn!("Persistence shutdown error: {}", e);
         }
     }
 }
@@ -306,6 +390,8 @@ impl Clone for Persistence {
     fn clone(&self) -> Self {
         Self {
             backend: match &self.backend {
+                #[cfg(feature = "persistence")]
+                Backend::Composite(b) => Backend::Composite(b.clone()),
                 #[cfg(feature = "persistence")]
                 Backend::File(b) => Backend::File(b.clone()),
                 // #[cfg(feature = "persistence")]
@@ -322,6 +408,12 @@ impl Clone for Persistence {
 impl std::fmt::Debug for Persistence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.backend {
+            #[cfg(feature = "persistence")]
+            Backend::Composite(_) => write!(
+                f,
+                "Persistence(Composite, entities: {:?})",
+                self.enabled_entities
+            ),
             #[cfg(feature = "persistence")]
             Backend::File(_) => write!(
                 f,
@@ -373,10 +465,12 @@ mod tests {
         let handler = NoOpBackend::new();
         let event = create_test_event();
 
-        // Should not panic - all operations are no-ops
-        handler.persist_event(PersistenceEvent::Share(event));
-        handler.flush();
-        handler.shutdown();
+        // Should not panic - all operations are no-ops and return Ok
+        assert!(
+            PersistenceBackend::persist_event(&handler, PersistenceEvent::Share(event)).is_ok()
+        );
+        assert!(PersistenceBackend::flush(&handler).is_ok());
+        assert!(PersistenceBackend::shutdown(&handler).is_ok());
     }
 
     #[tokio::test]
@@ -390,8 +484,8 @@ mod tests {
         let handler = FileBackend::new(test_file.clone(), 100, task_manager).unwrap();
 
         let event = create_test_event();
-        handler.persist_event(PersistenceEvent::Share(event));
-        handler.shutdown();
+        PersistenceBackend::persist_event(&handler, PersistenceEvent::Share(event)).unwrap();
+        PersistenceBackend::shutdown(&handler).unwrap();
 
         // Give worker thread time to process
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

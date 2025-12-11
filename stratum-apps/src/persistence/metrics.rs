@@ -1,4 +1,4 @@
-use crate::persistence::{PersistenceBackend, PersistenceEvent};
+use crate::persistence::{PersistenceBackend, PersistenceError, PersistenceEvent};
 use crate::task_manager::TaskManager;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -126,7 +126,7 @@ impl MetricsBackend {
 }
 
 impl PersistenceBackend for MetricsBackend {
-    fn persist_event(&self, event: PersistenceEvent) {
+    fn persist_event(&self, event: PersistenceEvent) -> Result<(), PersistenceError> {
         #[cfg(feature = "metrics")]
         match event {
             PersistenceEvent::Share(share) => {
@@ -191,10 +191,16 @@ impl PersistenceBackend for MetricsBackend {
         {
             let _ = event;
         }
+        Ok(())
     }
 
-    fn flush(&self) {}
-    fn shutdown(&self) {}
+    fn flush(&self) -> Result<(), PersistenceError> {
+        Ok(())
+    }
+
+    fn shutdown(&self) -> Result<(), PersistenceError> {
+        Ok(())
+    }
 }
 
 // ============================================================================
