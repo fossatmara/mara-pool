@@ -41,34 +41,22 @@ required_extensions = [
 ]
 
 # Persistence Configuration
-# Controls how share and block events are persisted
-[persistence]
-entities = ["shares"]  # What to persist: "shares", "blocks", or both
-backend = "composite"  # Backend type: "composite", "metrics", "file", or "noop"
+# Each backend section enables that backend. Entities are declared per-backend.
+# Fallbacks reference other backend names (e.g., fallback = "file").
 
-# Composite backend routes - events are sent to all matching routes
-# Each route can have a fallback for error recovery
-[[persistence.composite.routes]]
-name = "metrics"
-backend = "metrics"
-entities = ["shares"]
-fallback = "file_backup"  # Fall back to file if metrics fails
-
-[[persistence.composite.routes]]
-name = "file_backup"
-backend = "file"
-entities = ["shares"]
-# No fallback - this is the last resort
-
-# Metrics backend configuration (Prometheus)
+# Metrics backend (Prometheus) - primary backend with file fallback
 [persistence.metrics]
 resource_path = "/metrics"  # HTTP endpoint path for Prometheus scraping
 port = 9091                 # Port for metrics HTTP server
+entities = ["shares"]       # What this backend persists
+fallback = "file"           # Fall back to file backend on error
 
-# File backend configuration (used by composite fallback)
+# File backend - fallback for metrics, no further fallback
 [persistence.file]
 file_path = "./pool_shares.log"
-channel_size = 10000  # Optional, defaults to 10000
+channel_size = 10000        # Optional, defaults to 10000
+entities = ["shares"]       # What this backend persists
+# No fallback - this is the last resort
 
 # Bitcoin Core IPC config
 [template_provider_type.BitcoinCoreIpc]

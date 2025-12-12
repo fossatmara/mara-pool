@@ -54,6 +54,12 @@ pub struct FileBackendConfig {
     /// Channel buffer size for async persistence
     #[serde(default = "default_channel_size")]
     pub channel_size: usize,
+    /// Entity types this backend handles (e.g., ["shares"])
+    #[serde(default = "default_entities")]
+    pub entities: Vec<String>,
+    /// Optional fallback backend name (e.g., "file" to fall back to file backend)
+    #[serde(default)]
+    pub fallback: Option<String>,
 }
 
 /// Metrics backend configuration (Prometheus)
@@ -64,54 +70,46 @@ pub struct MetricsBackendConfig {
     pub resource_path: String,
     /// Port for metrics HTTP server
     pub port: u16,
-}
-
-/// Configuration for a single route in the composite backend
-#[cfg(feature = "persistence")]
-#[derive(Clone, Debug, serde::Deserialize)]
-pub struct BackendRouteConfig {
-    /// Human-readable name for this route (for logging)
-    pub name: String,
-    /// Backend type for this route: "file", "metrics", etc.
-    pub backend: String,
-    /// Entity types this route handles (filters from global entities)
-    /// If empty, uses all global entities
-    #[serde(default)]
+    /// Entity types this backend handles (e.g., ["shares"])
+    #[serde(default = "default_entities")]
     pub entities: Vec<String>,
-    /// Optional fallback backend name (must reference another route's name)
+    /// Optional fallback backend name (e.g., "file" to fall back to file backend)
     #[serde(default)]
     pub fallback: Option<String>,
-}
-
-/// Composite backend configuration
-#[cfg(feature = "persistence")]
-#[derive(Clone, Debug, serde::Deserialize)]
-pub struct CompositeBackendConfig {
-    /// List of backend routes
-    pub routes: Vec<BackendRouteConfig>,
 }
 
 /// Persistence configuration for share event logging.
 ///
 /// This is only available when the `persistence` feature is enabled.
+///
+/// Persistence is automatically enabled when any backend section is present.
+/// Each backend declares which entities it handles, and optionally a fallback.
+/// The system automatically constructs a composite backend from all configured backends.
+///
+/// # Example TOML
+///
+/// ```toml
+/// [persistence.metrics]
+/// resource_path = "/metrics"
+/// port = 9091
+/// entities = ["shares"]
+/// fallback = "file"  # Fall back to file backend on error
+///
+/// [persistence.file]
+/// file_path = "./pool_shares.log"
+/// entities = ["shares"]
+/// # No fallback - this is the last resort
+/// ```
 #[cfg(feature = "persistence")]
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct PersistenceConfig {
-    /// Backend type: "file", "sqlite", etc.
-    pub backend: String,
-    /// Which entities to persist (e.g., ["shares"])
-    #[serde(default = "default_entities")]
-    pub entities: Vec<String>,
-    /// File backend configuration (only used when backend = "file")
+    /// File backend configuration
     #[serde(default)]
     pub file: Option<FileBackendConfig>,
-    /// Metrics backend configuration (only used when backend = "metrics")
+    /// Metrics backend configuration
     #[cfg(feature = "metrics")]
     #[serde(default)]
     pub metrics: Option<MetricsBackendConfig>,
-    /// Composite backend configuration (only used when backend = "composite")
-    #[serde(default)]
-    pub composite: Option<CompositeBackendConfig>,
 }
 
 #[cfg(feature = "persistence")]
@@ -139,6 +137,10 @@ fn parse_entity_type(s: &str) -> Option<stratum_apps::persistence::EntityType> {
 }
 
 /// Implement IntoPersistence trait for pool's config type
+///
+/// This automatically constructs a composite backend from all configured backend sections.
+/// Each backend becomes a route in the composite, with fallbacks wired up as specified.
+/// The global entity set is inferred from the union of all backend entity lists.
 #[cfg(feature = "persistence")]
 impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
     fn into_persistence(
@@ -152,142 +154,86 @@ impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
             Backend, BackendRoute, CompositeBackend, EntityType, FileBackend, Persistence,
         };
 
-        // Parse global entity types
-        let enabled_entities: HashSet<EntityType> = self
-            .entities
-            .iter()
-            .filter_map(|s| parse_entity_type(s))
-            .collect();
+        // Build backends and collect entity types
+        let mut backends: HashMap<
+            String,
+            std::sync::Arc<dyn stratum_apps::persistence::PersistenceBackend>,
+        > = HashMap::new();
+        let mut backend_entities: HashMap<String, HashSet<EntityType>> = HashMap::new();
+        let mut backend_fallbacks: HashMap<String, Option<String>> = HashMap::new();
+        let mut all_entities: HashSet<EntityType> = HashSet::new();
 
-        // Create backend based on config
-        let backend = match self.backend.as_str() {
-            "file" => {
-                let file_config = self.file.ok_or_else(|| {
-                    stratum_apps::persistence::Error::Custom(
-                        "[persistence.file] section required for file backend".to_string(),
-                    )
-                })?;
+        // Create file backend if configured
+        if let Some(file_config) = &self.file {
+            let file_backend = std::sync::Arc::new(FileBackend::new(
+                file_config.file_path.clone(),
+                file_config.channel_size,
+                task_manager.clone(),
+            )?);
+            backends.insert("file".to_string(), file_backend);
 
-                Backend::File(FileBackend::new(
-                    file_config.file_path,
-                    file_config.channel_size,
-                    task_manager,
-                )?)
-            }
-            #[cfg(feature = "metrics")]
-            "metrics" => {
-                let metrics_config = self.metrics.ok_or_else(|| {
-                    stratum_apps::persistence::Error::Custom(
-                        "[persistence.metrics] section required for metrics backend".to_string(),
-                    )
-                })?;
+            let entities: HashSet<EntityType> = file_config
+                .entities
+                .iter()
+                .filter_map(|s| parse_entity_type(s))
+                .collect();
+            all_entities.extend(entities.iter().cloned());
+            backend_entities.insert("file".to_string(), entities);
+            backend_fallbacks.insert("file".to_string(), file_config.fallback.clone());
+        }
 
-                Backend::Metrics(MetricsBackend::new(
-                    metrics_config.resource_path.into(),
-                    metrics_config.port,
-                    task_manager,
-                )?)
-            }
-            "composite" => {
-                let composite_config = self.composite.ok_or_else(|| {
-                    stratum_apps::persistence::Error::Custom(
-                        "[persistence.composite] section required for composite backend"
-                            .to_string(),
-                    )
-                })?;
+        // Create metrics backend if configured
+        #[cfg(feature = "metrics")]
+        if let Some(metrics_config) = &self.metrics {
+            let metrics_backend = std::sync::Arc::new(MetricsBackend::new(
+                metrics_config.resource_path.clone().into(),
+                metrics_config.port,
+                task_manager.clone(),
+            )?);
+            backends.insert("metrics".to_string(), metrics_backend);
 
-                // First pass: create all backends by name
-                let mut backends: HashMap<
-                    String,
-                    std::sync::Arc<dyn stratum_apps::persistence::PersistenceBackend>,
-                > = HashMap::new();
+            let entities: HashSet<EntityType> = metrics_config
+                .entities
+                .iter()
+                .filter_map(|s| parse_entity_type(s))
+                .collect();
+            all_entities.extend(entities.iter().cloned());
+            backend_entities.insert("metrics".to_string(), entities);
+            backend_fallbacks.insert("metrics".to_string(), metrics_config.fallback.clone());
+        }
 
-                for route_config in &composite_config.routes {
-                    let backend: std::sync::Arc<dyn stratum_apps::persistence::PersistenceBackend> =
-                        match route_config.backend.as_str() {
-                            "file" => {
-                                let file_config = self.file.as_ref().ok_or_else(|| {
-                                    stratum_apps::persistence::Error::Custom(format!(
-                                        "[persistence.file] section required for route '{}'",
-                                        route_config.name
-                                    ))
-                                })?;
-                                std::sync::Arc::new(FileBackend::new(
-                                    file_config.file_path.clone(),
-                                    file_config.channel_size,
-                                    task_manager.clone(),
-                                )?)
-                            }
-                            #[cfg(feature = "metrics")]
-                            "metrics" => {
-                                let metrics_config = self.metrics.as_ref().ok_or_else(|| {
-                                    stratum_apps::persistence::Error::Custom(format!(
-                                        "[persistence.metrics] section required for route '{}'",
-                                        route_config.name
-                                    ))
-                                })?;
-                                std::sync::Arc::new(MetricsBackend::new(
-                                    metrics_config.resource_path.clone().into(),
-                                    metrics_config.port,
-                                    task_manager.clone(),
-                                )?)
-                            }
-                            other => {
-                                return Err(stratum_apps::persistence::Error::Custom(format!(
-                                    "Unknown backend type '{}' in route '{}'",
-                                    other, route_config.name
-                                )));
-                            }
-                        };
-                    backends.insert(route_config.name.clone(), backend);
+        // If no backends configured, return error
+        if backends.is_empty() {
+            return Err(stratum_apps::persistence::Error::Custom(
+                "No persistence backends configured. Add [persistence.file] or [persistence.metrics] section.".to_string(),
+            ));
+        }
+
+        // Build routes from backends
+        let mut routes = Vec::new();
+        for (name, backend) in &backends {
+            let entities = backend_entities.get(name).cloned().unwrap_or_default();
+            let mut route = BackendRoute::new(name.clone(), backend.clone(), entities);
+
+            // Wire up fallback if specified
+            if let Some(Some(fallback_name)) = backend_fallbacks.get(name) {
+                if let Some(fallback_backend) = backends.get(fallback_name) {
+                    route = route.with_fallback(fallback_backend.clone());
+                } else {
+                    return Err(stratum_apps::persistence::Error::Custom(format!(
+                        "Fallback '{}' not found for backend '{}'",
+                        fallback_name, name
+                    )));
                 }
-
-                // Second pass: create routes with fallbacks
-                let mut routes = Vec::new();
-                for route_config in &composite_config.routes {
-                    let backend = backends.get(&route_config.name).unwrap().clone();
-
-                    // Parse route-specific entities (or use global if empty)
-                    let route_entities: HashSet<EntityType> = if route_config.entities.is_empty() {
-                        enabled_entities.clone()
-                    } else {
-                        route_config
-                            .entities
-                            .iter()
-                            .filter_map(|s| parse_entity_type(s))
-                            .filter(|e| enabled_entities.contains(e))
-                            .collect()
-                    };
-
-                    let mut route =
-                        BackendRoute::new(route_config.name.clone(), backend, route_entities);
-
-                    // Wire up fallback if specified
-                    if let Some(fallback_name) = &route_config.fallback {
-                        if let Some(fallback_backend) = backends.get(fallback_name) {
-                            route = route.with_fallback(fallback_backend.clone());
-                        } else {
-                            return Err(stratum_apps::persistence::Error::Custom(format!(
-                                "Fallback '{}' not found for route '{}'",
-                                fallback_name, route_config.name
-                            )));
-                        }
-                    }
-
-                    routes.push(route);
-                }
-
-                Backend::Composite(CompositeBackend::new(routes))
             }
-            other => {
-                return Err(stratum_apps::persistence::Error::Custom(format!(
-                    "Unknown backend type: {}",
-                    other
-                )));
-            }
-        };
 
-        Ok(Persistence::with_backend(backend, enabled_entities))
+            routes.push(route);
+        }
+
+        // Always use composite backend internally (even for single backend)
+        let backend = Backend::Composite(CompositeBackend::new(routes));
+
+        Ok(Persistence::with_backend(backend, all_entities))
     }
 }
 
@@ -465,24 +411,22 @@ mod tests {
 
         #[cfg(feature = "metrics")]
         let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec!["shares".to_string()],
             file: Some(FileBackendConfig {
                 file_path: PathBuf::from("/tmp/test_pool_persistence.log"),
                 channel_size: 5000,
+                entities: vec!["shares".to_string()],
+                fallback: None,
             }),
             metrics: None,
-            composite: None,
         };
         #[cfg(not(feature = "metrics"))]
         let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec!["shares".to_string()],
             file: Some(FileBackendConfig {
                 file_path: PathBuf::from("/tmp/test_pool_persistence.log"),
                 channel_size: 5000,
+                entities: vec!["shares".to_string()],
+                fallback: None,
             }),
-            composite: None,
         };
 
         // Create a TaskManager for the test
@@ -498,71 +442,25 @@ mod tests {
 
     #[cfg(feature = "persistence")]
     #[tokio::test]
-    async fn test_persistence_config_missing_file_section() {
+    async fn test_persistence_config_no_backends() {
         use stratum_apps::persistence::IntoPersistence;
 
         #[cfg(feature = "metrics")]
         let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec!["shares".to_string()],
-            file: None, // Missing file config
+            file: None,
             metrics: None,
-            composite: None,
         };
         #[cfg(not(feature = "metrics"))]
-        let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec!["shares".to_string()],
-            file: None, // Missing file config
-            composite: None,
-        };
+        let config = PersistenceConfig { file: None };
 
         // Create a TaskManager for the test
         let task_manager = Arc::new(TaskManager::new());
 
-        // Should fail because file backend requires [persistence.file] section
+        // Should fail because no backends are configured
         let result = config.into_persistence(task_manager);
         assert!(result.is_err());
         let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(err_msg.contains("[persistence.file] section required"));
-    }
-
-    #[cfg(feature = "persistence")]
-    #[tokio::test]
-    async fn test_persistence_config_unknown_backend() {
-        use std::path::PathBuf;
-        use stratum_apps::persistence::IntoPersistence;
-
-        #[cfg(feature = "metrics")]
-        let config = PersistenceConfig {
-            backend: "unknown_backend".to_string(),
-            entities: vec!["shares".to_string()],
-            file: Some(FileBackendConfig {
-                file_path: PathBuf::from("/tmp/test.log"),
-                channel_size: 5000,
-            }),
-            metrics: None,
-            composite: None,
-        };
-        #[cfg(not(feature = "metrics"))]
-        let config = PersistenceConfig {
-            backend: "unknown_backend".to_string(),
-            entities: vec!["shares".to_string()],
-            file: Some(FileBackendConfig {
-                file_path: PathBuf::from("/tmp/test.log"),
-                channel_size: 5000,
-            }),
-            composite: None,
-        };
-
-        // Create a TaskManager for the test
-        let task_manager = Arc::new(TaskManager::new());
-
-        // Should fail with unknown backend error
-        let result = config.into_persistence(task_manager);
-        assert!(result.is_err());
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(err_msg.contains("Unknown backend type"));
+        assert!(err_msg.contains("No persistence backends configured"));
     }
 
     #[cfg(feature = "persistence")]
@@ -573,30 +471,28 @@ mod tests {
 
         #[cfg(feature = "metrics")]
         let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec![
-                "shares".to_string(),
-                "unknown_entity".to_string(), // Should be filtered out
-            ],
             file: Some(FileBackendConfig {
-                file_path: PathBuf::from("/tmp/test.log"),
+                file_path: PathBuf::from("/tmp/test_entity_filter.log"),
                 channel_size: 5000,
+                entities: vec![
+                    "shares".to_string(),
+                    "unknown_entity".to_string(), // Should be filtered out
+                ],
+                fallback: None,
             }),
             metrics: None,
-            composite: None,
         };
         #[cfg(not(feature = "metrics"))]
         let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec![
-                "shares".to_string(),
-                "unknown_entity".to_string(), // Should be filtered out
-            ],
             file: Some(FileBackendConfig {
-                file_path: PathBuf::from("/tmp/test.log"),
+                file_path: PathBuf::from("/tmp/test_entity_filter.log"),
                 channel_size: 5000,
+                entities: vec![
+                    "shares".to_string(),
+                    "unknown_entity".to_string(), // Should be filtered out
+                ],
+                fallback: None,
             }),
-            composite: None,
         };
 
         // Create a TaskManager for the test
@@ -605,6 +501,9 @@ mod tests {
         // Should succeed and filter out unknown entities
         let result = config.into_persistence(task_manager);
         assert!(result.is_ok());
+
+        // Clean up
+        let _ = std::fs::remove_file("/tmp/test_entity_filter.log");
     }
 
     #[cfg(feature = "persistence")]
@@ -616,37 +515,31 @@ mod tests {
         let config = FileBackendConfig {
             file_path: PathBuf::from("/tmp/test.log"),
             channel_size: 5000,
+            entities: vec!["shares".to_string()],
+            fallback: None,
         };
         assert_eq!(config.channel_size, 5000);
     }
 
-    #[cfg(feature = "persistence")]
+    #[cfg(all(feature = "persistence", feature = "metrics"))]
     #[tokio::test]
-    async fn test_persistence_config_multiple_entities() {
+    async fn test_persistence_config_metrics_with_file_fallback() {
         use std::path::PathBuf;
         use stratum_apps::persistence::IntoPersistence;
 
-        // Test with multiple entities (even though only "shares" is currently supported)
-        #[cfg(feature = "metrics")]
         let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec!["shares".to_string()],
             file: Some(FileBackendConfig {
-                file_path: PathBuf::from("/tmp/test_multi.log"),
-                channel_size: 10000,
+                file_path: PathBuf::from("/tmp/test_fallback.log"),
+                channel_size: 5000,
+                entities: vec!["shares".to_string()],
+                fallback: None, // File is the last resort
             }),
-            metrics: None,
-            composite: None,
-        };
-        #[cfg(not(feature = "metrics"))]
-        let config = PersistenceConfig {
-            backend: "file".to_string(),
-            entities: vec!["shares".to_string()],
-            file: Some(FileBackendConfig {
-                file_path: PathBuf::from("/tmp/test_multi.log"),
-                channel_size: 10000,
+            metrics: Some(MetricsBackendConfig {
+                resource_path: "/metrics".to_string(),
+                port: 19091, // Use different port to avoid conflicts
+                entities: vec!["shares".to_string()],
+                fallback: Some("file".to_string()), // Fall back to file
             }),
-            composite: None,
         };
 
         // Create a TaskManager for the test
@@ -656,6 +549,42 @@ mod tests {
         assert!(result.is_ok());
 
         // Clean up
-        let _ = std::fs::remove_file("/tmp/test_multi.log");
+        let _ = std::fs::remove_file("/tmp/test_fallback.log");
+    }
+
+    #[cfg(feature = "persistence")]
+    #[tokio::test]
+    async fn test_persistence_config_invalid_fallback() {
+        use std::path::PathBuf;
+        use stratum_apps::persistence::IntoPersistence;
+
+        #[cfg(feature = "metrics")]
+        let config = PersistenceConfig {
+            file: Some(FileBackendConfig {
+                file_path: PathBuf::from("/tmp/test_invalid_fallback.log"),
+                channel_size: 5000,
+                entities: vec!["shares".to_string()],
+                fallback: Some("nonexistent".to_string()), // Invalid fallback
+            }),
+            metrics: None,
+        };
+        #[cfg(not(feature = "metrics"))]
+        let config = PersistenceConfig {
+            file: Some(FileBackendConfig {
+                file_path: PathBuf::from("/tmp/test_invalid_fallback.log"),
+                channel_size: 5000,
+                entities: vec!["shares".to_string()],
+                fallback: Some("nonexistent".to_string()), // Invalid fallback
+            }),
+        };
+
+        // Create a TaskManager for the test
+        let task_manager = Arc::new(TaskManager::new());
+
+        // Should fail because fallback doesn't exist
+        let result = config.into_persistence(task_manager);
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("Fallback 'nonexistent' not found"));
     }
 }
