@@ -1,0 +1,146 @@
+# SRI Pool Configuration - Development/Testing with Vitess
+#
+# Simplified configuration for local development and testing with:
+# - Vitess (connected to local MySQL for development)
+# - Metrics (for monitoring during development)
+# - File fallback (for reliability testing)
+
+authority_public_key = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
+authority_secret_key = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
+cert_validity_sec = 3600
+listen_address = "0.0.0.0:34254"
+coinbase_reward_script = "addr(tb1qtzqxqaxyy6lda2fhdtp5dp0v56vlf6g0mmklmm)"
+server_id = 1
+pool_signature = "Stratum V2 SRI Pool - Testnet4"
+shares_per_minute = 6.0
+share_batch_size = 10
+supported_extensions = []
+required_extensions = []
+
+[template_provider_type.Sv2Tp]
+address = "127.0.0.1:8442"
+
+# =============================================================================
+# Development Persistence Configuration
+# =============================================================================
+
+# Vitess backend - Connected to local MySQL for development
+[persistence.vitess]
+# Local MySQL (no vtgate for development)
+connection_string = "mysql://root:password@localhost:3306/mining_pool_dev"
+
+# Smaller pool for development
+pool_size = 5
+
+# Standard buffer sizes
+channel_size = 1000               # Smaller for development
+batch_size = 50                   # Smaller batches for faster feedback
+batch_timeout_ms = 500            # Faster flush for development
+
+# Fast failure for development
+retry_max_attempts = 2
+retry_timeout_secs = 5
+
+# Optional: Internal fallback file
+fallback_file_path = "./dev_vitess_overflow.log"
+
+# Route share events to Vitess
+entities = ["shares"]
+
+# Fall back to file if Vitess unavailable
+fallback = "file"
+
+# Metrics backend - For development monitoring
+[persistence.metrics]
+resource_path = "/metrics"
+port = 9091
+
+# Route share events to metrics
+entities = ["shares"]
+
+# Fall back to file if metrics fail
+fallback = "file"
+
+# File backend - Development logs and fallback
+[persistence.file]
+file_path = "./dev_share_events.log"
+channel_size = 1000
+
+# Handle all share events (receives fallbacks from vitess and metrics)
+entities = ["shares"]
+
+# No fallback - last resort
+
+# =============================================================================
+# Development Setup
+# =============================================================================
+#
+# Quick Start:
+#
+# 1. Start local MySQL:
+#    docker run -d --name mysql-dev \
+#      -e MYSQL_ROOT_PASSWORD=password \
+#      -e MYSQL_DATABASE=mining_pool_dev \
+#      -p 3306:3306 \
+#      mysql:8.0
+#
+# 2. Apply schema:
+#    mysql -h 127.0.0.1 -u root -ppassword mining_pool_dev < docs/vitess/schema.sql
+#
+# 3. Build pool with vitess and metrics:
+#    cargo build --features "vitess,metrics"
+#
+# 4. Run pool:
+#    ./target/debug/pool_sv2 -c config-examples/testnet4/pool-config-vitess-dev-example.toml
+#
+# 5. View metrics:
+#    curl http://localhost:9091/metrics
+#
+# 6. Check database:
+#    mysql -h 127.0.0.1 -u root -ppassword mining_pool_dev \
+#      -e "SELECT COUNT(*) as total_shares FROM share_events;"
+#
+# 7. Monitor logs:
+#    tail -f dev_share_events.log
+#
+# =============================================================================
+# Testing Scenarios
+# =============================================================================
+#
+# Test Vitess Failure:
+# 1. Stop MySQL: docker stop mysql-dev
+# 2. Submit shares - should see retry attempts in logs
+# 3. After 3 attempts, events should appear in dev_share_events.log
+# 4. Restart MySQL: docker start mysql-dev
+# 5. New shares should persist to Vitess again
+#
+# Test Metrics Failure:
+# 1. Check metrics endpoint is up: curl http://localhost:9091/metrics
+# 2. If metrics fail, shares should still persist to Vitess and file
+#
+# Test Complete Infrastructure Failure:
+# 1. Stop both MySQL and metrics
+# 2. All events should route to file backend
+# 3. Pool should continue operating normally
+#
+# =============================================================================
+# Development Monitoring
+# =============================================================================
+#
+# Prometheus (local):
+# docker run -d --name prometheus \
+#   -p 9090:9090 \
+#   -v ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+#   prom/prometheus
+#
+# Grafana (local):
+# docker run -d --name grafana \
+#   -p 3000:3000 \
+#   -v ./monitoring/grafana/provisioning:/etc/grafana/provisioning \
+#   grafana/grafana
+#
+# Access:
+# - Prometheus: http://localhost:9090
+# - Grafana: http://localhost:3000 (admin/admin)
+# - Pool Metrics: http://localhost:9091/metrics
+#

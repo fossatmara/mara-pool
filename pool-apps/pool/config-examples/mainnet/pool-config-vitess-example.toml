@@ -37,16 +37,11 @@ required_extensions = []
 address = "127.0.0.1:8442"
 
 # =============================================================================
-# Vitess Persistence Configuration
+# Vitess Persistence Configuration with File Fallback
 # =============================================================================
-
-[persistence]
-# Backend type: "file" or "vitess"
-backend = "vitess"
-
-# Entity types to persist
-# Currently supported: ["shares"]
-entities = ["shares"]
+#
+# The composite backend automatically routes events to Vitess with file fallback.
+# If Vitess becomes unavailable, events are automatically routed to the file backend.
 
 # Vitess backend configuration
 [persistence.vitess]
@@ -109,11 +104,26 @@ retry_max_attempts = 3
 # Default: 10
 retry_timeout_secs = 10
 
-# Optional: File path for fallback persistence
-# If Vitess is unavailable after max retries, events are written here
-# Leave commented out to drop events instead (not recommended for production)
+# Optional: Internal fallback file (for retry queue overflow)
+# This is Vitess-internal and separate from the composite backend fallback
 # Default: None
-fallback_file_path = "/var/log/pool/share_events_fallback.log"
+fallback_file_path = "/var/log/pool/vitess_retry_overflow.log"
+
+# Entity routing - which event types this backend handles
+# Default: ["shares"]
+entities = ["shares"]
+
+# Composite backend fallback chain
+# If Vitess fails after retries, route to this backend
+# Default: None
+fallback = "file"
+
+# File backend configuration - Fallback destination
+[persistence.file]
+file_path = "/var/log/pool/share_events.log"
+channel_size = 10000
+entities = ["shares"]
+# No fallback - file is the last resort
 
 # =============================================================================
 # Performance Notes
