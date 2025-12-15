@@ -23,6 +23,9 @@ tokio = { version = "1.44.1", features = ["full"] }
 futures = { version = "0.3.28" }
 tokio-util = { version = "0.7.10", default-features = false, features = ["codec"], optional = true }
 
+# Vitess/MySQL persistence (optional)
+sqlx = { version = "0.8", features = ["runtime-tokio", "mysql"], optional = true }
+
 # Config helpers dependencies  
 serde = { version = "1.0.89", features = ["derive", "alloc"], default-features = false }
 miniscript = { version = "13.0.0", default-features = false }
@@ -60,6 +63,7 @@ config = []
 rpc = ["serde_json", "hex", "base64", "hyper", "hyper-util", "http-body-util"]
 persistence = ["core"]
 metrics = ["persistence", "dep:prometheus", "dep:axum", "dep:lazy_static"]
+vitess = ["persistence", "sqlx"]
 std = ["bs58/std", "secp256k1/rand-std", "rand/std", "rand/std_rng"]
 core = ["stratum-core"]
 

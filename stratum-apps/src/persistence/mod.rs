@@ -20,10 +20,10 @@
 pub mod composite;
 #[cfg(feature = "persistence")]
 pub mod file;
-// #[cfg(feature = "persistence")]
-// pub mod sqlite;
 #[cfg(feature = "metrics")]
 pub mod metrics;
+#[cfg(feature = "vitess")]
+pub mod vitess;
 pub mod noop;
 
 #[cfg(feature = "persistence")]
@@ -36,10 +36,10 @@ use stratum_core::bitcoin::hashes::sha256d::Hash;
 pub use composite::{BackendRoute, CompositeBackend};
 #[cfg(feature = "persistence")]
 pub use file::FileBackend;
-// #[cfg(feature = "persistence")]
-// pub use sqlite::SqliteBackend;
 #[cfg(feature = "metrics")]
 pub use metrics::MetricsBackend;
+#[cfg(feature = "vitess")]
+pub use vitess::{VitessBackend, VitessConfig};
 pub use noop::NoOpBackend;
 
 #[cfg(feature = "persistence")]
@@ -185,9 +185,10 @@ pub trait PersistenceBackend: Send + Sync + std::fmt::Debug {
 pub enum Backend {
     Composite(CompositeBackend),
     File(FileBackend),
-    // Sqlite(SqliteBackend),
     #[cfg(feature = "metrics")]
     Metrics(MetricsBackend),
+    #[cfg(feature = "vitess")]
+    Vitess(VitessBackend),
     NoOp(NoOpBackend),
 }
 
@@ -336,10 +337,10 @@ impl Persistence {
                 Backend::Composite(b) => PersistenceBackend::persist_event(b, event),
                 #[cfg(feature = "persistence")]
                 Backend::File(b) => PersistenceBackend::persist_event(b, event),
-                // #[cfg(feature = "persistence")]
-                // Backend::Sqlite(b) => PersistenceBackend::persist_event(b, event),
                 #[cfg(feature = "metrics")]
                 Backend::Metrics(b) => PersistenceBackend::persist_event(b, event),
+                #[cfg(feature = "vitess")]
+                Backend::Vitess(b) => PersistenceBackend::persist_event(b, event),
                 Backend::NoOp(b) => PersistenceBackend::persist_event(b, event),
             };
 
@@ -355,10 +356,10 @@ impl Persistence {
             Backend::Composite(b) => PersistenceBackend::flush(b),
             #[cfg(feature = "persistence")]
             Backend::File(b) => PersistenceBackend::flush(b),
-            // #[cfg(feature = "persistence")]
-            // Backend::Sqlite(b) => PersistenceBackend::flush(b),
             #[cfg(feature = "metrics")]
             Backend::Metrics(b) => PersistenceBackend::flush(b),
+            #[cfg(feature = "vitess")]
+            Backend::Vitess(b) => PersistenceBackend::flush(b),
             Backend::NoOp(b) => PersistenceBackend::flush(b),
         };
 
@@ -373,10 +374,10 @@ impl Persistence {
             Backend::Composite(b) => PersistenceBackend::shutdown(b),
             #[cfg(feature = "persistence")]
             Backend::File(b) => PersistenceBackend::shutdown(b),
-            // #[cfg(feature = "persistence")]
-            // Backend::Sqlite(b) => PersistenceBackend::shutdown(b),
             #[cfg(feature = "metrics")]
             Backend::Metrics(b) => PersistenceBackend::shutdown(b),
+            #[cfg(feature = "vitess")]
+            Backend::Vitess(b) => PersistenceBackend::shutdown(b),
             Backend::NoOp(b) => PersistenceBackend::shutdown(b),
         };
 
@@ -394,10 +395,10 @@ impl Clone for Persistence {
                 Backend::Composite(b) => Backend::Composite(b.clone()),
                 #[cfg(feature = "persistence")]
                 Backend::File(b) => Backend::File(b.clone()),
-                // #[cfg(feature = "persistence")]
-                // Backend::Sqlite(b) => Backend::Sqlite(b.clone()),
                 #[cfg(feature = "metrics")]
                 Backend::Metrics(b) => Backend::Metrics(b.clone()),
+                #[cfg(feature = "vitess")]
+                Backend::Vitess(b) => Backend::Vitess(b.clone()),
                 Backend::NoOp(b) => Backend::NoOp(*b),
             },
             enabled_entities: self.enabled_entities.clone(),
@@ -420,13 +421,16 @@ impl std::fmt::Debug for Persistence {
                 "Persistence(File, entities: {:?})",
                 self.enabled_entities
             ),
-            // #[cfg(feature = "persistence")]
-            // Backend::Sqlite(_) => write!(f, "Persistence(Sqlite, entities: {:?})",
-            // self.enabled_entities),
             #[cfg(feature = "metrics")]
             Backend::Metrics(_) => write!(
                 f,
                 "Persistence(Metrics, entities: {:?})",
+                self.enabled_entities
+            ),
+            #[cfg(feature = "vitess")]
+            Backend::Vitess(_) => write!(
+                f,
+                "Persistence(Vitess, entities: {:?})",
                 self.enabled_entities
             ),
             Backend::NoOp(_) => write!(f, "Persistence(NoOp)"),

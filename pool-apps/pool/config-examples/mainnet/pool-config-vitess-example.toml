@@ -1,0 +1,143 @@
+# SRI Pool Configuration with Vitess Persistence Backend
+#
+# This example demonstrates how to configure the pool with Vitess.io
+# for horizontally scalable persistence of share events.
+
+# Pool authority keys (generate using pool-sv2 keygen)
+authority_public_key = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
+authority_secret_key = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
+
+# Certificate validity in seconds
+cert_validity_sec = 3600
+
+# Pool listening address
+listen_address = "0.0.0.0:3333"
+
+# Coinbase reward output script
+coinbase_reward_script = "addr(bc1qtzqxqaxyy6lda2fhdtp5dp0v56vlf6g0tljy2x)"
+
+# Server identifier
+server_id = 1
+
+# Pool signature displayed to miners
+pool_signature = "Stratum V2 SRI Pool"
+
+# Target difficulty - shares per minute per miner
+shares_per_minute = 6.0
+
+# Share batch size for processing
+share_batch_size = 10
+
+# Supported and required protocol extensions
+supported_extensions = []
+required_extensions = []
+
+# Template provider configuration
+[template_provider_type.Sv2Tp]
+address = "127.0.0.1:8442"
+
+# =============================================================================
+# Vitess Persistence Configuration
+# =============================================================================
+
+[persistence]
+# Backend type: "file" or "vitess"
+backend = "vitess"
+
+# Entity types to persist
+# Currently supported: ["shares"]
+entities = ["shares"]
+
+# Vitess backend configuration
+[persistence.vitess]
+# Vitess connection string (MySQL protocol)
+#
+# Format: mysql://username:password@vtgate_host:port/keyspace
+#
+# Examples:
+# - Local development (direct MySQL):
+#   connection_string = "mysql://root:password@localhost:3306/mining_pool_dev"
+#
+# - Staging (single vtgate):
+#   connection_string = "mysql://app_user:staging_pass@vtgate-staging.internal:15306/mining_pool"
+#
+# - Production (vtgate with load balancer):
+#   connection_string = "mysql://app_user:prod_pass@vtgate-lb.prod.internal:15306/mining_pool"
+#
+# - SSL/TLS (production security):
+#   connection_string = "mysql://app_user:pass@vtgate.prod:15306/mining_pool?ssl-mode=REQUIRED"
+#
+connection_string = "mysql://pool_app:secure_password@vtgate:15306/mining_pool"
+
+# Connection pool configuration
+# -----------------------------------------
+# Maximum number of concurrent connections to vtgate
+# Recommended: (num_workers * 2) + 1
+# Default: 10
+pool_size = 20
+
+# Event queueing (mining hot path -> worker)
+# -----------------------------------------
+# Buffer size for async event queueing
+# Events are queued non-blocking until this limit is reached
+# If full, new events will log an error but not block mining
+# Default: 10000
+channel_size = 10000
+
+# Batch insert configuration
+# -----------------------------------------
+# Number of events to accumulate before inserting
+# Larger batches = higher throughput, but slightly higher latency
+# Recommended: 50-200 for high-volume pools
+# Default: 100
+batch_size = 100
+
+# Maximum wait time (milliseconds) before flushing a partial batch
+# Ensures low-latency flush during low-traffic periods
+# Default: 1000 (1 second)
+batch_timeout_ms = 1000
+
+# Retry and fallback configuration
+# -----------------------------------------
+# Maximum number of retry attempts before using fallback
+# After this many failures, events are written to fallback file (if configured)
+# Default: 3
+retry_max_attempts = 3
+
+# Cooldown period (seconds) between retry attempts
+# Prevents hammering vtgate during extended outages
+# Default: 10
+retry_timeout_secs = 10
+
+# Optional: File path for fallback persistence
+# If Vitess is unavailable after max retries, events are written here
+# Leave commented out to drop events instead (not recommended for production)
+# Default: None
+fallback_file_path = "/var/log/pool/share_events_fallback.log"
+
+# =============================================================================
+# Performance Notes
+# =============================================================================
+#
+# Expected throughput: 1000+ shares/sec sustained
+# Memory footprint: ~15MB max (channel + retry queue + batch buffers)
+# Latency: P99 < 50ms (non-blocking guarantee)
+#
+# Tuning guidelines:
+# - Increase batch_size for higher throughput (at cost of slightly higher latency)
+# - Increase pool_size if vtgate has high concurrent capacity
+# - Decrease batch_timeout_ms for lower-latency in low-traffic scenarios
+# - Monitor retry queue depth - growing queue indicates connectivity issues
+#
+# =============================================================================
+# Monitoring
+# =============================================================================
+#
+# Key metrics to track:
+# - Share insertion rate (shares/sec)
+# - Batch flush frequency (flushes/sec)
+# - Retry queue depth (events queued for retry)
+# - Fallback activation count (vtgate outages)
+# - vtgate query duration P99 (ms)
+# - Connection pool utilization (%)
+#

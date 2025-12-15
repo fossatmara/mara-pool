@@ -1,0 +1,25 @@
+{
+  "comment": "Vitess VSchema Configuration for Mining Pool",
+  "sharded": true,
+  "vindexes": {
+    "user_hash": {
+      "type": "hash",
+      "params": {},
+      "owner": ""
+    }
+  },
+  "tables": {
+    "share_events": {
+      "column_vindexes": [
+        {
+          "column": "shard_key",
+          "name": "user_hash"
+        }
+      ],
+      "auto_increment": {
+        "column": "id",
+        "sequence": "share_events_seq"
+      }
+    }
+  }
+}

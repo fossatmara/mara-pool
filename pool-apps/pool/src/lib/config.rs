@@ -78,6 +78,41 @@ pub struct MetricsBackendConfig {
     pub fallback: Option<String>,
 }
 
+/// Vitess backend configuration
+#[cfg(feature = "vitess")]
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct VitessBackendConfig {
+    /// Vitess connection string (MySQL protocol)
+    /// Format: mysql://username:password@vtgate:port/keyspace
+    pub connection_string: String,
+    /// Maximum number of connections in the pool
+    #[serde(default = "default_pool_size")]
+    pub pool_size: u32,
+    /// Channel buffer size for async event queueing
+    #[serde(default = "default_channel_size")]
+    pub channel_size: usize,
+    /// Number of events to batch before inserting
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    /// Maximum time (ms) to wait before flushing batch
+    #[serde(default = "default_batch_timeout_ms")]
+    pub batch_timeout_ms: u64,
+    /// Maximum retry attempts before falling back
+    #[serde(default = "default_retry_max_attempts")]
+    pub retry_max_attempts: u32,
+    /// Seconds to wait before retrying after failure
+    #[serde(default = "default_retry_timeout_secs")]
+    pub retry_timeout_secs: u64,
+    /// Optional file path for fallback persistence
+    pub fallback_file_path: Option<PathBuf>,
+    /// Entity types this backend handles (e.g., ["shares"])
+    #[serde(default = "default_entities")]
+    pub entities: Vec<String>,
+    /// Optional fallback backend name (e.g., "file" to fall back to file backend)
+    #[serde(default)]
+    pub fallback: Option<String>,
+}
+
 /// Persistence configuration for share event logging.
 ///
 /// This is only available when the `persistence` feature is enabled.
@@ -110,6 +145,10 @@ pub struct PersistenceConfig {
     #[cfg(feature = "metrics")]
     #[serde(default)]
     pub metrics: Option<MetricsBackendConfig>,
+    /// Vitess backend configuration
+    #[cfg(feature = "vitess")]
+    #[serde(default)]
+    pub vitess: Option<VitessBackendConfig>,
 }
 
 #[cfg(feature = "persistence")]
@@ -120,6 +159,31 @@ fn default_channel_size() -> usize {
 #[cfg(feature = "persistence")]
 fn default_entities() -> Vec<String> {
     vec!["shares".to_string()]
+}
+
+#[cfg(feature = "vitess")]
+fn default_pool_size() -> u32 {
+    10
+}
+
+#[cfg(feature = "vitess")]
+fn default_batch_size() -> usize {
+    100
+}
+
+#[cfg(feature = "vitess")]
+fn default_batch_timeout_ms() -> u64 {
+    1000 // 1 second
+}
+
+#[cfg(feature = "vitess")]
+fn default_retry_max_attempts() -> u32 {
+    3
+}
+
+#[cfg(feature = "vitess")]
+fn default_retry_timeout_secs() -> u64 {
+    10
 }
 
 /// Helper function to parse entity type strings
@@ -202,10 +266,44 @@ impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
             backend_fallbacks.insert("metrics".to_string(), metrics_config.fallback.clone());
         }
 
+        // Create Vitess backend if configured
+        #[cfg(feature = "vitess")]
+        if let Some(vitess_config) = &self.vitess {
+            use stratum_apps::persistence::vitess::{VitessBackend, VitessConfig};
+
+            let vitess_cfg = VitessConfig {
+                connection_string: vitess_config.connection_string.clone(),
+                pool_size: vitess_config.pool_size,
+                channel_size: vitess_config.channel_size,
+                batch_size: vitess_config.batch_size,
+                batch_timeout_ms: vitess_config.batch_timeout_ms,
+                retry_max_attempts: vitess_config.retry_max_attempts,
+                retry_timeout_secs: vitess_config.retry_timeout_secs,
+                fallback_file_path: vitess_config.fallback_file_path.clone(),
+            };
+
+            // Create backend synchronously (constructor spawns async worker)
+            let runtime = tokio::runtime::Handle::current();
+            let vitess_backend = runtime.block_on(async {
+                VitessBackend::new(vitess_cfg, task_manager.clone()).await
+            })?;
+
+            backends.insert("vitess".to_string(), std::sync::Arc::new(vitess_backend));
+
+            let entities: HashSet<EntityType> = vitess_config
+                .entities
+                .iter()
+                .filter_map(|s| parse_entity_type(s))
+                .collect();
+            all_entities.extend(entities.iter().cloned());
+            backend_entities.insert("vitess".to_string(), entities);
+            backend_fallbacks.insert("vitess".to_string(), vitess_config.fallback.clone());
+        }
+
         // If no backends configured, return error
         if backends.is_empty() {
             return Err(stratum_apps::persistence::Error::Custom(
-                "No persistence backends configured. Add [persistence.file] or [persistence.metrics] section.".to_string(),
+                "No persistence backends configured. Add [persistence.file], [persistence.metrics], or [persistence.vitess] section.".to_string(),
             ));
         }
 
