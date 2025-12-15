@@ -4,7 +4,7 @@
 //! The compiler will optimize away all calls to this handler with `#[inline(always)]`,
 //! resulting in true zero-cost abstraction when persistence is not needed.
 
-use super::{PersistenceBackend, PersistenceEvent};
+use super::{PersistenceBackend, PersistenceError, PersistenceEvent};
 
 #[cfg(test)]
 use super::ShareEvent;
@@ -35,18 +35,21 @@ impl NoOpBackend {
 
 impl PersistenceBackend for NoOpBackend {
     #[inline(always)]
-    fn persist_event(&self, _event: PersistenceEvent) {
+    fn persist_event(&self, _event: PersistenceEvent) -> Result<(), PersistenceError> {
         // Intentionally empty - compiles to nothing
+        Ok(())
     }
 
     #[inline(always)]
-    fn flush(&self) {
+    fn flush(&self) -> Result<(), PersistenceError> {
         // Intentionally empty - compiles to nothing
+        Ok(())
     }
 
     #[inline(always)]
-    fn shutdown(&self) {
+    fn shutdown(&self) -> Result<(), PersistenceError> {
         // Intentionally empty - compiles to nothing
+        Ok(())
     }
 }
 
@@ -79,10 +82,12 @@ mod tests {
             version: 1,
         };
 
-        // Should not panic - all operations are no-ops
-        handler.persist_event(PersistenceEvent::Share(event));
-        handler.flush();
-        handler.shutdown();
+        // Should not panic - all operations are no-ops and return Ok
+        assert!(handler
+            .persist_event(PersistenceEvent::Share(event))
+            .is_ok());
+        assert!(handler.flush().is_ok());
+        assert!(handler.shutdown().is_ok());
     }
 
     #[test]
