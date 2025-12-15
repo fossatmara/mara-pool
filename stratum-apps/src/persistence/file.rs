@@ -6,7 +6,7 @@
 
 use crate::task_manager::TaskManager;
 
-use super::{PersistenceBackend, PersistenceEvent};
+use super::{PersistenceBackend, PersistenceError, PersistenceEvent};
 use async_channel::{Receiver, Sender};
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 use tokio::io::AsyncWriteExt;
@@ -141,27 +141,26 @@ impl FileBackend {
 }
 
 impl PersistenceBackend for FileBackend {
-    fn persist_event(&self, event: PersistenceEvent) {
+    fn persist_event(&self, event: PersistenceEvent) -> Result<(), PersistenceError> {
         // Format using Debug - handler decides serialization format
         let formatted = format!("{:?}", event);
 
         // Send is non-blocking when channel has capacity
-        // If channel is full, try_send will fail and we log an error
-        if let Err(e) = self.sender.try_send(FileCommand::Write(formatted)) {
-            tracing::error!("Failed to send event to file persistence: {}", e);
-        }
+        self.sender
+            .try_send(FileCommand::Write(formatted))
+            .map_err(|_| PersistenceError::ChannelFull)
     }
 
-    fn flush(&self) {
-        if let Err(e) = self.sender.try_send(FileCommand::Flush) {
-            tracing::error!("Failed to send flush command: {}", e);
-        }
+    fn flush(&self) -> Result<(), PersistenceError> {
+        self.sender
+            .try_send(FileCommand::Flush)
+            .map_err(|_| PersistenceError::ChannelFull)
     }
 
-    fn shutdown(&self) {
-        if let Err(e) = self.sender.try_send(FileCommand::Shutdown) {
-            tracing::error!("Failed to send shutdown command: {}", e);
-        }
+    fn shutdown(&self) -> Result<(), PersistenceError> {
+        self.sender
+            .try_send(FileCommand::Shutdown)
+            .map_err(|_| PersistenceError::ChannelFull)
     }
 }
 
@@ -215,10 +214,16 @@ mod tests {
         };
 
         use super::super::PersistenceEvent;
-        handler.persist_event(PersistenceEvent::Share(event1.clone()));
-        handler.persist_event(PersistenceEvent::Share(event1.clone()));
-        handler.persist_event(PersistenceEvent::Share(event1));
-        handler.flush();
+        handler
+            .persist_event(PersistenceEvent::Share(event1.clone()))
+            .unwrap();
+        handler
+            .persist_event(PersistenceEvent::Share(event1.clone()))
+            .unwrap();
+        handler
+            .persist_event(PersistenceEvent::Share(event1))
+            .unwrap();
+        handler.flush().unwrap();
 
         // Give the worker thread time to process and flush
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
@@ -234,7 +239,7 @@ mod tests {
         assert_eq!(line_count, 3);
 
         // Clean up
-        handler.shutdown();
+        handler.shutdown().unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         std::fs::remove_file(&test_file).unwrap();
     }
@@ -254,7 +259,7 @@ mod tests {
         assert!(nested_path.parent().unwrap().exists());
 
         // Clean up
-        handler.shutdown();
+        handler.shutdown().unwrap();
         if let Some(parent) = nested_path.parent() {
             let _ = std::fs::remove_dir_all(parent.parent().unwrap());
         }
@@ -295,8 +300,10 @@ mod tests {
         };
 
         use super::super::PersistenceEvent;
-        handler.persist_event(PersistenceEvent::Share(event));
-        handler.shutdown();
+        handler
+            .persist_event(PersistenceEvent::Share(event))
+            .unwrap();
+        handler.shutdown().unwrap();
 
         // Give worker time to shutdown
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

@@ -40,6 +40,24 @@ required_extensions = [
     # 0x0002,
 ]
 
+# Persistence Configuration
+# Each backend section enables that backend. Entities are declared per-backend.
+# Fallbacks reference other backend names (e.g., fallback = "file").
+
+# Metrics backend (Prometheus) - primary backend with file fallback
+[persistence.metrics]
+resource_path = "/metrics"  # HTTP endpoint path for Prometheus scraping
+port = 9091                 # Port for metrics HTTP server
+entities = ["shares"]       # What this backend persists
+fallback = "file"           # Fall back to file backend on error
+
+# File backend - fallback for metrics, no further fallback
+[persistence.file]
+file_path = "./pool_shares.log"
+channel_size = 10000        # Optional, defaults to 10000
+entities = ["shares"]       # What this backend persists
+# No fallback - this is the last resort
+
 # Local Sv2 Template Provider config
 [template_provider_type.Sv2Tp]
 address = "127.0.0.1:8442"

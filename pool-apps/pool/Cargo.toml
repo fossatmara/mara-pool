@@ -31,3 +31,4 @@ bitcoin_core_sv2 = { path = "../../bitcoin-core-sv2" }
 [features]
 default = ["persistence"]
 persistence = ["stratum-apps/persistence"]
+metrics = ["persistence", "stratum-apps/metrics"]
