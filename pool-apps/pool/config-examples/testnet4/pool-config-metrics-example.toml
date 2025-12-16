@@ -1,0 +1,78 @@
+# SRI Pool config - Metrics Example
+#
+# This example demonstrates how to use the metrics persistence backend
+# to expose share data via a Prometheus-compatible HTTP endpoint.
+#
+# To run the pool with metrics enabled:
+#   cargo run --features metrics -- -c config-examples/testnet4/pool-config-metrics-example.toml
+#
+# Verify metrics are available:
+#   curl http://localhost:9091/metrics
+#
+# Available metrics:
+#   - stratum_pool_shares_valid_total{user_identity}     - Valid shares submitted
+#   - stratum_pool_shares_invalid_total{user_identity}   - Invalid shares submitted
+#   - stratum_pool_blocks_found_total{user_identity}     - Blocks found
+#
+authority_public_key = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
+authority_secret_key = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
+cert_validity_sec = 3600
+listen_address = "0.0.0.0:3333"
+
+# Coinbase outputs are specified as descriptors. A full list of descriptors is available at
+#     https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki#appendix-b-index-of-script-expressions
+# Although the `musig` descriptor is not yet supported and the legacy `combo` descriptor never
+# will be. If you have an address, embed it in a descriptor like `addr(<address here>)`.
+coinbase_reward_script = "addr(tb1qvsf5qfckvdq5gm37jkdve9qwp7crmg45dxknkv)"
+
+# Server Id (number to guarantee unique search space allocation across different Pool servers)
+server_id = 1
+
+# Pool signature (string to be included in coinbase tx)
+pool_signature = "mara-pool-sv2"
+
+# How many shares we expect to receive in a minute (determines difficulty targets)
+shares_per_minute = 6.0
+# How many shares do we want to acknowledge in a batch
+share_batch_size = 10
+
+# Protocol Extensions Configuration
+supported_extensions = []
+required_extensions = []
+
+# =============================================================================
+# Metrics Persistence Configuration
+# =============================================================================
+#
+# The metrics backend exposes share data as Prometheus metrics via HTTP.
+# This is useful for:
+#   - Real-time monitoring and alerting
+#   - Integration with Grafana dashboards
+#   - Tracking pool performance over time
+#
+# Configuration options:
+#   resource_path  - HTTP endpoint path (default: /metrics)
+#   port           - HTTP server port (default: 9091)
+#   entities       - Data types to persist (default: ["shares"])
+#   fallback       - Optional fallback backend name (e.g., "file")
+
+[persistence.metrics]
+resource_path = "/metrics"
+port = 9091
+entities = ["shares"]
+fallback = "file"  # Fall back to file backend on error
+
+# File backend - fallback for metrics
+[persistence.file]
+file_path = "./pool_shares.log"
+channel_size = 10000
+entities = ["shares"]
+# No fallback - this is the last resort
+
+# =============================================================================
+# Local Sv2 Template Provider config
+# =============================================================================
+#
+# Connect to a local Template Provider running on port 8442
+[template_provider_type.Sv2Tp]
+address = "127.0.0.1:8442"
