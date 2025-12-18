@@ -6,7 +6,7 @@ use crate::{
         downstream::{downstream::Downstream, DownstreamMessages},
         sv1_server::{
             channel::Sv1ServerChannelState, data::Sv1ServerData,
-            difficulty_manager::DifficultyManager,
+            difficulty_manager::DifficultyManager, keepalive_manager::KeepaliveManager,
         },
     },
     utils::ShutdownMessage,
@@ -159,6 +159,20 @@ impl Sv1Server {
             self.config.downstream_difficulty_config.enable_vardiff,
         );
 
+        // Spawn the job keepalive loop to prevent SV1 miners from timing out
+        let keepalive_manager = Arc::new(KeepaliveManager::new());
+        let keepalive_future = KeepaliveManager::spawn_keepalive_loop(
+            keepalive_manager,
+            self.sv1_server_data.clone(),
+            self.sv1_server_channel_state
+                .sv1_server_to_downstream_sender
+                .clone(),
+            self.config
+                .downstream_difficulty_config
+                .job_keepalive_interval_secs,
+            5, // Check every 5 seconds
+        );
+
         let listener = TcpListener::bind(self.listener_addr).await.map_err(|e| {
             error!("Failed to bind to {}: {}", self.listener_addr, e);
             e
@@ -170,6 +184,7 @@ impl Sv1Server {
         let task_manager_clone = task_manager.clone();
         task_manager_clone.spawn(async move {
             tokio::pin!(vardiff_future);
+            tokio::pin!(keepalive_future);
             loop {
                 tokio::select! {
                     message = shutdown_rx_main.recv() => {
@@ -293,6 +308,7 @@ impl Sv1Server {
                         }
                     }
                     _ = &mut vardiff_future => {}
+                    _ = &mut keepalive_future => {}
                 }
             }
             drop(shutdown_complete_tx);

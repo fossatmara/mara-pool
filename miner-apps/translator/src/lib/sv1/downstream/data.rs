@@ -1,12 +1,13 @@
 use std::{
     cell::RefCell,
     sync::{atomic::AtomicBool, Arc},
+    time::Instant,
 };
 use stratum_apps::{
     custom_mutex::Mutex,
     stratum_core::{
         bitcoin::Target,
-        sv1_api::{json_rpc, utils::HexU32Be},
+        sv1_api::{json_rpc, server_to_client, utils::HexU32Be},
     },
     utils::types::{ChannelId, DownstreamId, Hashrate},
 };
@@ -45,6 +46,11 @@ pub struct DownstreamData {
     pub sv1_server_data: Arc<Mutex<Sv1ServerData>>,
     // Tracks the upstream target for this downstream, used for vardiff target comparison
     pub upstream_target: Option<Target>,
+    /// The last notify struct sent to this downstream (for keepalive re-sends).
+    /// Stored as the parsed Notify struct so we can modify job_id and ntime for keepalives.
+    pub last_notify_for_keepalive: Option<server_to_client::Notify<'static>>,
+    /// Timestamp of last job sent to this downstream (for keepalive timing).
+    pub last_job_sent: Instant,
 }
 
 impl DownstreamData {
@@ -76,6 +82,8 @@ impl DownstreamData {
             pending_share: RefCell::new(None),
             sv1_server_data,
             upstream_target: None,
+            last_notify_for_keepalive: None,
+            last_job_sent: Instant::now(),
         }
     }
 

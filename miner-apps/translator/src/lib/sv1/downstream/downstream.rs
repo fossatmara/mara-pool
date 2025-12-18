@@ -275,6 +275,11 @@ impl Downstream {
 
                                 if let Some(notify) = notify_opt {
                                     debug!("Down: Sending mining.notify");
+                                    // Update keepalive tracking before sending
+                                    self.downstream_data.super_safe_lock(|d| {
+                                        d.last_notify_for_keepalive = Some(notify.clone());
+                                        d.last_job_sent = std::time::Instant::now();
+                                    });
                                     self.downstream_channel_state
                                         .downstream_sv1_sender
                                         .send(notify.into())
@@ -519,6 +524,15 @@ impl Downstream {
 
         if let Some(notify_msg) = cached_notify {
             debug!("Down: Sending cached mining.notify after handshake completion");
+            // Parse the notify for keepalive tracking before sending
+            if let Message::Notification(notification) = &notify_msg {
+                if let Ok(notify) = server_to_client::Notify::try_from(notification.clone()) {
+                    self.downstream_data.super_safe_lock(|d| {
+                        d.last_notify_for_keepalive = Some(notify);
+                        d.last_job_sent = std::time::Instant::now();
+                    });
+                }
+            }
             self.downstream_channel_state
                 .downstream_sv1_sender
                 .send(notify_msg)

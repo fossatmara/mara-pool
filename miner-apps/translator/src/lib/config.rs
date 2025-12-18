@@ -125,6 +125,20 @@ pub struct DownstreamDifficultyConfig {
     /// Whether to enable variable difficulty adjustment mechanism.
     /// If false, difficulty will be managed by upstream (useful with JDC).
     pub enable_vardiff: bool,
+    /// Interval in seconds for job keepalive per downstream.
+    /// When no new jobs are sent to a downstream within this interval,
+    /// a new job with incremented job_id and fresh ntime will be sent.
+    /// This prevents SV1 miners from disconnecting due to their internal
+    /// timeout (typically 120 seconds in miners like cpuminer).
+    /// Set to 0 to disable keepalive. Default: 60 seconds.
+    #[serde(default = "default_job_keepalive_interval")]
+    pub job_keepalive_interval_secs: u64,
+}
+
+/// Default value for job keepalive interval (60 seconds).
+/// This is well under the typical 120-second miner timeout.
+fn default_job_keepalive_interval() -> u64 {
+    60
 }
 
 impl DownstreamDifficultyConfig {
@@ -138,6 +152,7 @@ impl DownstreamDifficultyConfig {
             min_individual_miner_hashrate,
             shares_per_minute,
             enable_vardiff,
+            job_keepalive_interval_secs: default_job_keepalive_interval(),
         }
     }
 }
