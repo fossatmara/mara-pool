@@ -1,0 +1,106 @@
+# Prometheus alert rules for SV2 Pool
+# These rules define conditions that trigger alerts to AlertManager
+
+groups:
+  - name: sv2_pool_alerts
+    rules:
+      # Hashrate Dropped - Warning level (>50% drop in 5 minutes)
+      - alert: HashrateDropped
+        expr: |
+          (
+            avg_over_time(stratum_pool_estimated_hashrate[10m] offset 5m) -
+            avg_over_time(stratum_pool_estimated_hashrate[5m])
+          ) / avg_over_time(stratum_pool_estimated_hashrate[10m] offset 5m) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hashrate dropped significantly for {{ $labels.user_identity }}"
+          description: "Hashrate has dropped more than 50% in the last 5 minutes for user {{ $labels.user_identity }}. Current vs previous: significant decrease detected."
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/hashrate-drop.md"
+
+      # Hashrate Critical Drop - Critical level (>80% drop in 5 minutes)
+      - alert: HashrateCriticalDrop
+        expr: |
+          (
+            avg_over_time(stratum_pool_estimated_hashrate[10m] offset 5m) -
+            avg_over_time(stratum_pool_estimated_hashrate[5m])
+          ) / avg_over_time(stratum_pool_estimated_hashrate[10m] offset 5m) > 0.8
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical hashrate drop for {{ $labels.user_identity }}"
+          description: "Hashrate has dropped more than 80% in the last 5 minutes for user {{ $labels.user_identity }}. Immediate attention required."
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/hashrate-critical.md"
+
+      # High Invalid Share Rate - Warning level (>5% over 5 minutes)
+      - alert: HighInvalidShareRate
+        expr: |
+          (
+            rate(stratum_pool_shares_invalid_total[5m]) /
+            (rate(stratum_pool_shares_valid_total[5m]) + rate(stratum_pool_shares_invalid_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High invalid share rate for {{ $labels.user_identity }}"
+          description: "Invalid share rate is above 5% over the last 5 minutes for user {{ $labels.user_identity }}. Current rate: {{ $value | printf \"%.2f\" }}%"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/invalid-shares.md"
+
+      # Invalid Share Spike - Critical level (>20% over 1 minute)
+      - alert: InvalidShareSpike
+        expr: |
+          (
+            rate(stratum_pool_shares_invalid_total[1m]) /
+            (rate(stratum_pool_shares_valid_total[1m]) + rate(stratum_pool_shares_invalid_total[1m]))
+          ) > 0.2
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical invalid share spike for {{ $labels.user_identity }}"
+          description: "Invalid share rate spiked above 20% in the last minute for user {{ $labels.user_identity }}. This may indicate miner misconfiguration or attack."
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/invalid-share-spike.md"
+
+      # No Blocks Found - Warning level (no blocks in 24 hours)
+      - alert: NoBlocksFound
+        expr: |
+          increase(stratum_pool_blocks_found_total[24h]) == 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "No blocks found in 24 hours"
+          description: "The pool has not found any blocks in the last 24 hours. This may be normal depending on pool hashrate and network difficulty, but should be monitored."
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/no-blocks.md"
+
+      # Metrics Endpoint Down - Critical level
+      - alert: MetricsEndpointDown
+        expr: up{job="sv2-pool"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SV2 Pool metrics endpoint is down"
+          description: "The SV2 Pool metrics endpoint (sv2-pool job) has been unreachable for more than 1 minute. This indicates the pool service may be down."
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/metrics-down.md"
+
+      # Daily Recap - Fires once per day at the configured time
+      # Uses the recording rule pool_daily_recap_trigger
+      - alert: DailyRecap
+        expr: pool_daily_recap_trigger == 1
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Daily Pool Recap"
+          description: "24-hour summary of pool metrics"
+          shares_valid: '{{ with printf "increase(stratum_pool_shares_valid_total[24h])" | query }}{{ . | first | value | printf "%.0f" }}{{ end }}'
+          shares_invalid: '{{ with printf "increase(stratum_pool_shares_invalid_total[24h])" | query }}{{ . | first | value | printf "%.0f" }}{{ end }}'
+          blocks_found: '{{ with printf "increase(stratum_pool_blocks_found_total[24h])" | query }}{{ . | first | value | printf "%.0f" }}{{ end }}'
+          avg_hashrate: '{{ with printf "avg_over_time(stratum_pool_estimated_hashrate[24h])" | query }}{{ . | first | value | humanize }}H/s{{ end }}'
+          peak_hashrate: '{{ with printf "max_over_time(stratum_pool_estimated_hashrate[24h])" | query }}{{ . | first | value | humanize }}H/s{{ end }}'
+          invalid_rate: '{{ with printf "(sum(increase(stratum_pool_shares_invalid_total[24h])) / (sum(increase(stratum_pool_shares_valid_total[24h])) + sum(increase(stratum_pool_shares_invalid_total[24h])))) * 100" | query }}{{ . | first | value | printf "%.2f" }}%{{ end }}'
+          active_miners: '{{ with printf "count(count by (user_identity) (rate(stratum_pool_shares_valid_total[24h]) > 0))" | query }}{{ . | first | value | printf "%.0f" }}{{ end }}'

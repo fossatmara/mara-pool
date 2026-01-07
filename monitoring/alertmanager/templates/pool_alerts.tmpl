@@ -1,0 +1,56 @@
+{{ define "slack.pool.title" -}}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}
+{{- end }}
+
+{{ define "slack.pool.color" -}}
+{{ if eq .Status "firing" -}}
+  {{ if eq .CommonLabels.severity "critical" -}}
+    danger
+  {{- else if eq .CommonLabels.severity "warning" -}}
+    warning
+  {{- else -}}
+    #439FE0
+  {{- end -}}
+{{- else -}}
+  good
+{{- end }}
+{{- end }}
+
+{{ define "slack.pool.text" -}}
+{{ range .Alerts -}}
+*Alert:* {{ .Labels.alertname }}
+*Severity:* {{ .Labels.severity }}
+{{ if .Labels.user_identity }}*User:* {{ .Labels.user_identity }}{{ end }}
+*Description:* {{ .Annotations.description }}
+{{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+*Started:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+{{ if eq $.Status "resolved" }}*Resolved:* {{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}{{ end }}
+*Details:*
+{{ range .Labels.SortedPairs -}}
+  {{ if and (ne .Name "alertname") (ne .Name "severity") }}  - {{ .Name }}: {{ .Value }}
+{{ end -}}
+{{ end }}
+---
+{{ end }}
+*Grafana Dashboard:* http://localhost:3000/d/sv2-pool-overview
+{{- end }}
+
+{{ define "slack.pool.recap.title" -}}
+SV2 Pool Daily Recap - {{ now | date "2006-01-02" }}
+{{- end }}
+
+{{ define "slack.pool.recap.text" -}}
+*24-Hour Pool Summary*
+
+{{ range .Alerts -}}
+{{ if .Annotations.shares_valid }}*Valid Shares:* {{ .Annotations.shares_valid }}{{ end }}
+{{ if .Annotations.shares_invalid }}*Invalid Shares:* {{ .Annotations.shares_invalid }}{{ end }}
+{{ if .Annotations.blocks_found }}*Blocks Found:* {{ .Annotations.blocks_found }}{{ end }}
+{{ if .Annotations.avg_hashrate }}*Average Hashrate:* {{ .Annotations.avg_hashrate }}{{ end }}
+{{ if .Annotations.peak_hashrate }}*Peak Hashrate:* {{ .Annotations.peak_hashrate }}{{ end }}
+{{ if .Annotations.invalid_rate }}*Invalid Share Rate:* {{ .Annotations.invalid_rate }}{{ end }}
+{{ if .Annotations.active_miners }}*Active Miners:* {{ .Annotations.active_miners }}{{ end }}
+{{ end }}
+---
+*View full dashboard:* http://localhost:3000/d/sv2-pool-overview
+{{- end }}

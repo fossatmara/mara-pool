@@ -1,0 +1,44 @@
+# Prometheus recording rules for SV2 Pool
+# Pre-computed metrics for efficient alerting and dashboards
+
+groups:
+  - name: sv2_pool_recording_rules
+    interval: 1m
+    rules:
+      # Daily recap trigger - fires once per day at 00:00-00:15 UTC
+      # This creates a metric that equals 1 during the first 15 minutes of each day
+      - record: pool_daily_recap_trigger
+        expr: |
+          (hour() == 0 and minute() < 15) * 1
+
+      # 5-minute average hashrate per user (for smoother graphing)
+      - record: pool_hashrate_5m_avg
+        expr: avg_over_time(stratum_pool_estimated_hashrate[5m])
+
+      # 1-hour average hashrate per user
+      - record: pool_hashrate_1h_avg
+        expr: avg_over_time(stratum_pool_estimated_hashrate[1h])
+
+      # Invalid share rate over 5 minutes (percentage)
+      - record: pool_invalid_share_rate_5m
+        expr: |
+          (
+            rate(stratum_pool_shares_invalid_total[5m]) /
+            (rate(stratum_pool_shares_valid_total[5m]) + rate(stratum_pool_shares_invalid_total[5m]) + 0.001)
+          ) * 100
+
+      # Total hashrate across all users (5m average)
+      - record: pool_total_hashrate_5m
+        expr: sum(avg_over_time(stratum_pool_estimated_hashrate[5m]))
+
+      # Share submission rate per user (shares per second)
+      - record: pool_share_rate_per_user
+        expr: rate(stratum_pool_shares_valid_total[5m])
+
+      # Total shares submitted across all users (5m rate)
+      - record: pool_total_share_rate_5m
+        expr: sum(rate(stratum_pool_shares_valid_total[5m]))
+
+      # Active miners count (users who submitted shares in last hour)
+      - record: pool_active_miners_count
+        expr: count(count by (user_identity) (rate(stratum_pool_shares_valid_total[1h]) > 0))

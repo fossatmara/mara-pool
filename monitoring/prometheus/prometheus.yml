@@ -4,6 +4,18 @@ global:
   external_labels:
     environment: local
 
+# AlertManager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Rule files for alerts and recording rules
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+  - /etc/prometheus/recording_rules.yml
+
 scrape_configs:
   # SV2 Pool - Metrics endpoint for share persistence
   - job_name: sv2-pool
