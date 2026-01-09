@@ -283,9 +283,11 @@ impl stratum_apps::persistence::IntoPersistence for PersistenceConfig {
             };
 
             // Create backend synchronously (constructor spawns async worker)
-            let runtime = tokio::runtime::Handle::current();
-            let vitess_backend = runtime.block_on(async {
-                VitessBackend::new(vitess_cfg, task_manager.clone()).await
+            // Use block_in_place to allow blocking within an async context
+            let vitess_backend = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    VitessBackend::new(vitess_cfg, task_manager.clone()).await
+                })
             })?;
 
             backends.insert("vitess".to_string(), std::sync::Arc::new(vitess_backend));

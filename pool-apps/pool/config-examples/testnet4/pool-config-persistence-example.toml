@@ -69,10 +69,19 @@ channel_size = 10000
 entities = ["shares"]
 # No fallback - this is the last resort
 
+[persistence.vitess]
+connection_string = "mysql://root@127.0.0.1:15306/mining_pool"
+pool_size = 5
+channel_size = 1000
+batch_size = 50
+batch_timeout_ms = 500
+entities = ["shares"]
+fallback = "file"
+
 # =============================================================================
 # Local Sv2 Template Provider config
 # =============================================================================
 #
 # Connect to a local Template Provider running on port 8442
 [template_provider_type.Sv2Tp]
-address = "127.0.0.1:8442"
+address = "127.0.0.1:48442"

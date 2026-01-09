@@ -82,11 +82,22 @@ impl VitessBackend {
         config: VitessConfig,
         task_manager: Arc<TaskManager>,
     ) -> Result<Self, super::Error> {
+        use sqlx::mysql::MySqlConnectOptions;
+        use std::str::FromStr;
+
+        // Parse connection string and configure for Vitess compatibility
+        let connect_options = MySqlConnectOptions::from_str(&config.connection_string)
+            .map_err(|e| {
+                super::Error::Custom(format!("Invalid connection string: {}", e))
+            })?
+            // Vitess doesn't support PIPES_AS_CONCAT SQL mode
+            .pipes_as_concat(false);
+
         // Create connection pool
         let pool = sqlx::mysql::MySqlPoolOptions::new()
             .max_connections(config.pool_size)
             .acquire_timeout(Duration::from_secs(5))
-            .connect(&config.connection_string)
+            .connect_with(connect_options)
             .await
             .map_err(|e| {
                 super::Error::Custom(format!("Failed to connect to Vitess: {}", e))
@@ -265,9 +276,10 @@ impl VitessBackend {
             .bind(&event.error_code)
             .bind(share_hash_bytes)
             .bind(&event.target[..]) // Convert [u8; 32] to &[u8]
-            .bind(event.nonce)
-            .bind(event.version)
-            .bind(event.ntime)
+            // Cast u32 to u64 to preserve unsigned semantics in MySQL
+            .bind(event.nonce as u64)
+            .bind(event.version as u64)
+            .bind(event.ntime as u64)
             .bind(&event.extranonce_prefix)
             .bind(event.rollable_extranonce_size.map(|s| s as i16))
             .bind(event.share_work)
