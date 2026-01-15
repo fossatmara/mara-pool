@@ -143,7 +143,7 @@ impl PersistenceBackend for CompositeBackend {
         let mut last_error: Option<PersistenceError> = None;
         // Track fallbacks that have already received this event to avoid duplicates
         // when multiple routes share the same fallback backend
-        let mut used_fallbacks: HashSet<usize> = HashSet::new();
+        let mut used_fallbacks: Vec<Arc<dyn PersistenceBackend>> = Vec::new();
 
         for route in &self.routes {
             // Skip if this route doesn't handle this entity type
@@ -165,12 +165,8 @@ impl PersistenceBackend for CompositeBackend {
 
                     // Try fallback if configured
                     if let Some(fallback) = &route.fallback {
-                        // Use pointer address to identify unique fallback instances
-                        // Cast through *const () first since dyn Trait is a fat pointer
-                        let fallback_ptr = Arc::as_ptr(fallback) as *const () as usize;
-
                         // Skip if we've already written to this fallback
-                        if used_fallbacks.contains(&fallback_ptr) {
+                        if used_fallbacks.iter().any(|f| Arc::ptr_eq(f, fallback)) {
                             tracing::debug!(
                                 route = %route.name,
                                 "Skipping duplicate fallback write"
@@ -180,7 +176,7 @@ impl PersistenceBackend for CompositeBackend {
 
                         match fallback.persist_event(event.clone()) {
                             Ok(()) => {
-                                used_fallbacks.insert(fallback_ptr);
+                                used_fallbacks.push(Arc::clone(fallback));
                                 tracing::debug!(
                                     route = %route.name,
                                     "Fallback backend succeeded"
