@@ -94,6 +94,7 @@ impl PoolSv2 {
                 monitoring_addr,
                 None, // Pool doesn't have channels opened with servers
                 Some(Arc::new(channel_manager.clone())), // channels opened with clients
+                std::time::Duration::from_secs(self.config.monitoring_cache_refresh_secs()),
             )
             .expect("Failed to initialize monitoring server");
 

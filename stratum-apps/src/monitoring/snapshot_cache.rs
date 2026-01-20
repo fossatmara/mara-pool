@@ -229,7 +229,7 @@ impl ServerMonitoring for CachedMonitoring {
         self.cache
             .get_snapshot()
             .server_summary
-            .unwrap_or_else(|| ServerSummary {
+            .unwrap_or(ServerSummary {
                 total_channels: 0,
                 extended_channels: 0,
                 standard_channels: 0,
@@ -255,7 +255,7 @@ impl ClientsMonitoring for CachedMonitoring {
         self.cache
             .get_snapshot()
             .clients_summary
-            .unwrap_or_else(|| ClientsSummary {
+            .unwrap_or(ClientsSummary {
                 total_clients: 0,
                 total_channels: 0,
                 extended_channels: 0,
@@ -282,7 +282,7 @@ impl Sv1ClientsMonitoring for CachedMonitoring {
         self.cache
             .get_snapshot()
             .sv1_summary
-            .unwrap_or_else(|| Sv1ClientsSummary {
+            .unwrap_or(Sv1ClientsSummary {
                 total_clients: 0,
                 total_hashrate: 0.0,
             })
