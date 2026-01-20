@@ -28,6 +28,10 @@
 #[cfg(feature = "core")]
 pub use stratum_core;
 
+/// Re-export extensions_sv2 from stratum_core for convenient access
+#[cfg(feature = "core")]
+pub use stratum_core::extensions_sv2;
+
 /// High-level networking utilities for SV2 connections
 ///
 /// Provides connection management, encrypted streams, and protocol handling.
@@ -62,10 +66,6 @@ pub mod key_utils;
 /// Utility methods used in apps.
 pub mod utils;
 
-/// Channel monitoring - expose channel data via HTTP JSON APIs
-#[cfg(feature = "monitoring")]
-pub mod monitoring;
-
 // Task orchestrator used in SRI apps.
 pub mod task_manager;
 
@@ -73,9 +73,6 @@ pub mod task_manager;
 ///
 /// Provides the type of template provider that will be used.
 pub mod tp_type;
-
-/// Creates a CoinbaseOutputConstraints message from a list of coinbase outputs
-pub mod coinbase_output_constraints;
 
 /// Persistence abstractions for shares
 ///

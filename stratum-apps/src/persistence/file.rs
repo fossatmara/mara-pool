@@ -4,12 +4,12 @@
 //! events to a log file using Debug formatting. Events are written in the background
 //! via an async channel to ensure the hot path remains unblocked.
 
-use super::{SharePersistenceHandler, ShareEvent};
-use async_channel::{Sender, Receiver};
-use std::fmt::Debug;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::PathBuf;
+use crate::task_manager::TaskManager;
+
+use super::{PersistenceBackend, PersistenceError, PersistenceEvent};
+use async_channel::{Receiver, Sender};
+use std::{fmt::Debug, path::PathBuf, sync::Arc};
+use tokio::io::AsyncWriteExt;
 
 /// File-based persistence handler that appends events to a log file.
 ///
@@ -20,18 +20,19 @@ use std::path::PathBuf;
 /// # Example
 ///
 /// ```rust,no_run
-/// use stratum_apps::persistence::{FileHandler, SharePersistence};
-/// use std::path::PathBuf;
+/// use std::{path::PathBuf, sync::Arc};
+/// use stratum_apps::persistence::{FileBackend, PersistenceBackend};
+/// use stratum_apps::task_manager::TaskManager;
 ///
 /// // Create a file handler with buffer size 1000
-/// let handler = FileHandler::new(PathBuf::from("events.log"), 1000).unwrap();
-/// let persistence = SharePersistence::new(Some(handler));
+/// let task_manager = Arc::new(TaskManager::new());
+/// let handler = FileBackend::new(PathBuf::from("events.log"), 1000, task_manager).unwrap();
 ///
 /// // Persist events (non-blocking) - handler uses Debug format internally
-/// // persistence.persist_event(share_event);
+/// // handler.persist_event(share_event);
 /// ```
 #[derive(Debug, Clone)]
-pub struct FileHandler {
+pub struct FileBackend {
     sender: Sender<FileCommand>,
 }
 
@@ -42,7 +43,7 @@ enum FileCommand {
     Shutdown,
 }
 
-impl FileHandler {
+impl FileBackend {
     /// Create a new file handler that will write to the specified path.
     ///
     /// This will spawn a background thread that handles all file I/O operations.
@@ -55,51 +56,53 @@ impl FileHandler {
     /// # Errors
     ///
     /// Returns an error if the file cannot be created or opened.
-    pub fn new(path: PathBuf, channel_size: usize) -> std::io::Result<Self> {
+    pub fn new(
+        path: PathBuf,
+        channel_size: usize,
+        task_manager: Arc<TaskManager>,
+    ) -> std::io::Result<Self> {
         // Ensure the parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Test that we can open the file
-        {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)?;
-            file.flush()?;
-        }
-
         let (sender, receiver) = async_channel::bounded(channel_size);
 
-        // Spawn background worker thread
-        std::thread::spawn(move || {
-            if let Err(e) = Self::worker_loop(path, receiver) {
-                tracing::error!("File persistence worker failed: {}", e);
-            }
-        });
+        // Spawn background worker task
+        task_manager.spawn(Self::worker_loop(path, receiver));
 
         tracing::info!("Initialized file persistence handler");
         Ok(Self { sender })
     }
 
-    /// Worker loop that runs in a background thread and handles file writes.
-    fn worker_loop(path: PathBuf, receiver: Receiver<FileCommand>) -> std::io::Result<()> {
-        let mut file = OpenOptions::new()
+    /// Worker loop that runs as an async task and handles file writes.
+    async fn worker_loop(path: PathBuf, receiver: Receiver<FileCommand>) {
+        // Open file with tokio async file operations
+        let file_result = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&path)?;
+            .open(&path)
+            .await;
+
+        let mut file = match file_result {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("Failed to open file for persistence: {}", e);
+                return;
+            }
+        };
 
         loop {
-            // Use blocking receive to avoid busy-waiting
-            match receiver.recv_blocking() {
+            // Use async receive
+            match receiver.recv().await {
                 Ok(FileCommand::Write(text)) => {
-                    if let Err(e) = writeln!(file, "{}", text) {
+                    let line = format!("{}\n", text);
+                    if let Err(e) = file.write_all(line.as_bytes()).await {
                         tracing::error!("Failed to write to file: {}", e);
                     }
                 }
                 Ok(FileCommand::Flush) => {
-                    if let Err(e) = file.flush() {
+                    if let Err(e) = file.flush().await {
                         tracing::error!("Failed to flush file: {}", e);
                     }
                 }
@@ -108,28 +111,27 @@ impl FileHandler {
                     while let Ok(cmd) = receiver.try_recv() {
                         match cmd {
                             FileCommand::Write(text) => {
-                                let _ = writeln!(file, "{}", text);
+                                let line = format!("{}\n", text);
+                                let _ = file.write_all(line.as_bytes()).await;
                             }
                             FileCommand::Flush => {
-                                let _ = file.flush();
+                                let _ = file.flush().await;
                             }
                             FileCommand::Shutdown => break,
                         }
                     }
-                    let _ = file.flush();
+                    let _ = file.flush().await;
                     tracing::info!("File persistence worker shutdown complete");
                     break;
                 }
                 Err(_) => {
                     // Channel closed, shutdown
-                    let _ = file.flush();
+                    let _ = file.flush().await;
                     tracing::info!("File persistence channel closed, shutting down");
                     break;
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Get the number of events waiting in the channel.
@@ -138,55 +140,59 @@ impl FileHandler {
     }
 }
 
-impl SharePersistenceHandler for FileHandler {
-    fn persist_event(&self, event: ShareEvent) {
+impl PersistenceBackend for FileBackend {
+    fn persist_event(&self, event: PersistenceEvent) -> Result<(), PersistenceError> {
         // Format using Debug - handler decides serialization format
         let formatted = format!("{:?}", event);
 
         // Send is non-blocking when channel has capacity
-        // If channel is full, try_send will fail and we log an error
-        if let Err(e) = self.sender.try_send(FileCommand::Write(formatted)) {
-            tracing::error!("Failed to send event to file persistence: {}", e);
-        }
+        self.sender
+            .try_send(FileCommand::Write(formatted))
+            .map_err(|_| PersistenceError::ChannelFull)
     }
 
-    fn flush(&self) {
-        if let Err(e) = self.sender.try_send(FileCommand::Flush) {
-            tracing::error!("Failed to send flush command: {}", e);
-        }
+    fn flush(&self) -> Result<(), PersistenceError> {
+        self.sender
+            .try_send(FileCommand::Flush)
+            .map_err(|_| PersistenceError::ChannelFull)
     }
 
-    fn shutdown(&self) {
-        if let Err(e) = self.sender.try_send(FileCommand::Shutdown) {
-            tracing::error!("Failed to send shutdown command: {}", e);
-        }
+    fn shutdown(&self) -> Result<(), PersistenceError> {
+        self.sender
+            .try_send(FileCommand::Shutdown)
+            .map_err(|_| PersistenceError::ChannelFull)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use std::io::Read;
-    use std::thread;
-    use std::time::Duration;
+    use std::{fs::File, io::Read};
 
-    #[test]
-    fn test_file_handler_basic_operations() {
+    #[tokio::test]
+    async fn test_file_handler_basic_operations() {
         use super::super::ShareEvent;
         use std::time::SystemTime;
 
         let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("test_persistence_{}.log", std::process::id()));
+        let test_file = temp_dir.join(format!(
+            "test_persistence_{}_{}.log",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
 
         // Clean up any existing test file
         let _ = std::fs::remove_file(&test_file);
 
-        let handler = FileHandler::new(test_file.clone(), 100).unwrap();
+        let task_manager = Arc::new(crate::task_manager::TaskManager::new());
+        let handler = FileBackend::new(test_file.clone(), 100, task_manager).unwrap();
 
         // Create share hash
         use stratum_core::bitcoin::hashes::{sha256d::Hash, Hash as HashTrait};
-        let share_hash = Hash::from_byte_array([0xab; 32]);
+        let share_hash = Some(Hash::from_byte_array([0xab; 32]));
 
         // Write some events
         let event1 = ShareEvent {
@@ -207,13 +213,20 @@ mod tests {
             version: 536870912,
         };
 
-        handler.persist_event(event1.clone());
-        handler.persist_event(event1.clone());
-        handler.persist_event(event1);
-        handler.flush();
+        use super::super::PersistenceEvent;
+        handler
+            .persist_event(PersistenceEvent::Share(event1.clone()))
+            .unwrap();
+        handler
+            .persist_event(PersistenceEvent::Share(event1.clone()))
+            .unwrap();
+        handler
+            .persist_event(PersistenceEvent::Share(event1))
+            .unwrap();
+        handler.flush().unwrap();
 
-        // Give the worker thread time to process
-        thread::sleep(Duration::from_millis(100));
+        // Give the worker thread time to process and flush
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
         // Read back the file
         let mut file = File::open(&test_file).unwrap();
@@ -221,36 +234,39 @@ mod tests {
         file.read_to_string(&mut contents).unwrap();
 
         assert!(contents.contains("miner1"));
-        let line_count = contents.lines().count();
+        // Count non-empty lines (writeln! adds trailing newline)
+        let line_count = contents.lines().filter(|l| !l.is_empty()).count();
         assert_eq!(line_count, 3);
 
         // Clean up
-        handler.shutdown();
-        thread::sleep(Duration::from_millis(100));
+        handler.shutdown().unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         std::fs::remove_file(&test_file).unwrap();
     }
 
-    #[test]
-    fn test_file_handler_creates_parent_directories() {
+    #[tokio::test]
+    async fn test_file_handler_creates_parent_directories() {
         let temp_dir = std::env::temp_dir();
         let nested_path = temp_dir
             .join(format!("test_nested_{}", std::process::id()))
             .join("subdir")
             .join("persistence.log");
 
-        let handler = FileHandler::new(nested_path.clone(), 100).unwrap();
+        let task_manager = Arc::new(crate::task_manager::TaskManager::new());
+        let handler = FileBackend::new(nested_path.clone(), 100, task_manager).unwrap();
 
-        assert!(nested_path.exists());
+        // Verify that parent directories were created synchronously
+        assert!(nested_path.parent().unwrap().exists());
 
         // Clean up
-        handler.shutdown();
+        handler.shutdown().unwrap();
         if let Some(parent) = nested_path.parent() {
             let _ = std::fs::remove_dir_all(parent.parent().unwrap());
         }
     }
 
-    #[test]
-    fn test_file_handler_shutdown() {
+    #[tokio::test]
+    async fn test_file_handler_shutdown() {
         use super::super::ShareEvent;
         use std::time::SystemTime;
 
@@ -259,10 +275,11 @@ mod tests {
 
         let _ = std::fs::remove_file(&test_file);
 
-        let handler = FileHandler::new(test_file.clone(), 100).unwrap();
+        let task_manager = Arc::new(crate::task_manager::TaskManager::new());
+        let handler = FileBackend::new(test_file.clone(), 100, task_manager).unwrap();
 
         use stratum_core::bitcoin::hashes::{sha256d::Hash, Hash as HashTrait};
-        let share_hash = Hash::from_byte_array([0u8; 32]);
+        let share_hash = Some(Hash::from_byte_array([0u8; 32]));
 
         let event = ShareEvent {
             error_code: None,
@@ -282,11 +299,14 @@ mod tests {
             version: 1,
         };
 
-        handler.persist_event(event);
-        handler.shutdown();
+        use super::super::PersistenceEvent;
+        handler
+            .persist_event(PersistenceEvent::Share(event))
+            .unwrap();
+        handler.shutdown().unwrap();
 
         // Give worker time to shutdown
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Verify file was flushed
         let metadata = std::fs::metadata(&test_file).unwrap();
