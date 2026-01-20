@@ -162,9 +162,7 @@ impl SnapshotCache {
     ///
     /// This method DOES acquire the business logic locks (via the trait methods),
     /// but it's only called periodically by a background task, not on every request.
-    ///
-    /// Returns the new snapshot.
-    pub fn refresh(&self) -> MonitoringSnapshot {
+    pub fn refresh(&self) {
         let mut new_snapshot = MonitoringSnapshot {
             timestamp: Some(Instant::now()),
             ..Default::default()
@@ -189,9 +187,7 @@ impl SnapshotCache {
         }
 
         // Update the cache
-        *self.snapshot.write().unwrap() = new_snapshot.clone();
-
-        new_snapshot
+        *self.snapshot.write().unwrap() = new_snapshot;
     }
 
     /// Get the refresh interval
