@@ -1,24 +1,37 @@
-<h1 align="center">
-  <br>
-  <a href="https://stratumprotocol.org"><img src="https://github.com/stratum-mining/stratumprotocol.org/blob/660ecc6ccd2eca82d0895cef939f4670adc6d1f4/src/.vuepress/public/assets/stratum-logo%402x.png" alt="SRI" width="200"></a>
-  <br>
-SV2 Applications
-  <br>
-</h1>
-<h4 align="center">Stratum V2 pool and miner applications from the SRI project 🦀</h4>
-<p align="center">
-  <a href="https://codecov.io/gh/stratum-mining/sv2-apps">
-    <img src="https://codecov.io/gh/stratum-mining/sv2-apps/branch/main/graph/badge.svg" alt="codecov">
-  </a>
-  <a href="https://twitter.com/intent/follow?screen_name=stratumv2">
-    <img src="https://img.shields.io/twitter/follow/stratumv2?style=social" alt="X (formerly Twitter) Follow">
-  </a>
-</p>
+# MARA Pool Sv2
 
-# SV2 Apps Repository
+An implementation of Stratum V2 pool and miner applications 🦀
 
-This repository contains the application-level crates, currently in **alpha** stage.
-If you're looking for the low-level protocol libraries, check out the [`stratum` repository](https://github.com/stratum-mining/stratum). Those crates provide the foundational protocol implementations used as dependencies by these applications.
+This repository provides applications using the Stratum V2 protocol, currently in **alpha** stage. This is a separately maintained project that builds upon the foundational work of the Stratum V2 Reference Implementation.
+
+## Attribution
+
+This project is based on the [Stratum V2 Reference Implementation](https://github.com/stratum-mining/sv2-apps) developed by the SRI team. We are deeply grateful for their foundational work on the Stratum V2 protocol and applications. For more information about the original project, visit [stratumprotocol.org](https://stratumprotocol.org).
+
+**This repository is independently maintained and is not officially affiliated with the SRI project.**
+
+For questions about the project direction or to propose new features, please open an issue in this repository or contact foss@mara.com.
+
+## Building and Testing
+
+This repository is organized into multiple workspaces. You can build and test all workspaces or work with individual ones.
+
+**Build all workspaces:**
+```bash
+./scripts/build-all-workspaces.sh
+```
+
+**Run tests, clippy, and formatter across all workspaces:**
+```bash
+./scripts/clippy-fmt-and-test.sh
+```
+
+**Or run commands individually in each workspace:**
+```bash
+cargo test    # Run test suite
+cargo clippy  # Check for common mistakes and style issues
+cargo fmt     # Format code according to style guidelines
+```
 
 ## Contents
 
@@ -38,68 +51,21 @@ If you're looking for the low-level protocol libraries, check out the [`stratum`
   - Custom synchronization primitives
 - `integration-tests/` - End-to-end integration tests validating interoperability between all components
 
+## Contributing
 
-## ⛏️ Getting Started
+We welcome contributions! Here's how to get started:
 
-To get started with the Stratum V2 Reference Implementation (SRI), please follow the detailed setup instructions available on the official website:
+1. **Fork the repository** and create a branch for your changes
+2. **Make your changes** following Rust best practices
+3. **Run tests**: Use `./scripts/clippy-fmt-and-test.sh` to run tests, clippy, and formatter across all workspaces
+4. **Submit a pull request** with a clear description of your changes
 
-[Getting Started with Stratum V2](https://stratumprotocol.org/blog/getting-started/)
-
-This guide provides all the necessary information on prerequisites, installation, and configuration to help you begin using, testing or contributing to SRI.
-
-## 🛣 Roadmap 
-
-Our roadmap is publicly available, outlining current and future plans. Decisions on the roadmap are made through a consensus-driven approach, through participation on dev meetings, Discord or GitHub.
-
-[View the SRI Roadmap](https://github.com/orgs/stratum-mining/projects/15)
-
-## 💻 Contribute 
-
-We welcome contributions to improve our SV2 apps! Here's how you can help:
-
-1. **Start small**: Check the [good first issue label](https://github.com/stratum-mining/sv2-apps/labels/good%20first%20issue) in the main SRI repository
-2. **Join the community**: Connect with us on [Discord](https://discord.gg/fsEW23wFYs) before starting larger contributions
-3. **Open issues**: [Create GitHub issues](https://github.com/stratum-mining/sv2-apps/issues) for bugs, feature requests, or questions
-4. **Follow standards**: Ensure code follows Rust best practices and includes appropriate tests
-
-## 🤝 Support
-
-Join our Discord community for technical support, discussions, and collaboration:
-
-[Join the Stratum V2 Discord Community](https://discord.gg/fsEW23wFYs)
-
-For detailed documentation and guides, visit:
-[Stratum V2 Documentation](https://stratumprotocol.org)
-
-## 🎁 Donate
-
-### 👤 Individual Donations 
-If you wish to support the development and maintenance of the Stratum V2 Reference Implementation, individual donations are greatly appreciated. You can donate through OpenSats, a 501(c)(3) public charity dedicated to supporting open-source Bitcoin projects.
-
-[Donate through OpenSats](https://opensats.org/projects/stratumv2)
-
-### 🏢 Corporate Donations
-For corporate entities interested in providing more substantial support, such as grants to SRI contributors, please get in touch with us directly. Your support can make a significant difference in accelerating development, research, and innovation.
-
-## 🙏 Supporters
-
-SRI contributors are independently, financially supported by following entities: 
-
-<p float="left">
-  <a href="https://hrf.org"><img src="https://raw.githubusercontent.com/stratum-mining/stratumprotocol.org/refs/heads/main/public/assets/hrf-logo-boxed.svg" width="250" /></a>
-  <a href="https://spiral.xyz"><img src="https://raw.githubusercontent.com/stratum-mining/stratumprotocol.org/refs/heads/main/public/assets/Spiral-logo-boxed.svg" width="250" /></a>
-  <a href="https://opensats.org/"><img src="https://raw.githubusercontent.com/stratum-mining/stratumprotocol.org/refs/heads/main/public/assets/opensats-logo-boxed.svg" width="250" /></a>
-  <a href="https://vinteum.org/"><img src="https://raw.githubusercontent.com/stratum-mining/stratumprotocol.org/refs/heads/main/public/assets/vinteum-logo-boxed.png" width="250" /></a>
-</p>
+For questions or discussions, please open an issue in this repository or contact foss@mara.com
 
 ## 📖 License
+
 This software is licensed under Apache 2.0 or MIT, at your option.
 
 ## 🦀 MSRV
+
 Minimum Supported Rust Version: 1.85.0
-
----
-
-> Website [stratumprotocol.org](https://www.stratumprotocol.org) &nbsp;&middot;&nbsp;
-> Discord [SV2 Discord](https://discord.gg/fsEW23wFYs) &nbsp;&middot;&nbsp;
-> Twitter [@Stratumv2](https://twitter.com/StratumV2) &nbsp;&middot;&nbsp;

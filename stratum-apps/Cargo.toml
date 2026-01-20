@@ -31,6 +31,7 @@ tracing = { version = "0.1" }
 
 # Key utils dependencies
 bs58 = { version = "0.4.0", default-features = false, features = ["check", "alloc"] }
+dirs = "6.0"
 secp256k1 = { version = "0.28.2", default-features = false, features = ["alloc", "rand"] }
 rand = { version = "0.8.5", default-features = false }
 rustversion = "1.0"
@@ -50,6 +51,13 @@ ext-config = { version = "0.14.0", features = ["toml"], package = "config" }
 prometheus = { version = "0.14.0", optional = true }
 axum = { version = "0.8.7", features = ["http1", "tokio"], optional = true }
 lazy_static = { version = "1.4", optional = true }
+shellexpand = "3.1.1"
+
+# Monitoring optional dependencies
+utoipa = { version = "5.4.0", features = ["axum_extras"], optional = true }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"], optional = true }
+
+
 
 [features]
 default = ["network", "config", "std"]
@@ -59,6 +67,7 @@ network = ["tokio-util", "core"]
 config = []
 rpc = ["serde_json", "hex", "base64", "hyper", "hyper-util", "http-body-util"]
 persistence = ["core"]
+monitoring = ["serde_json", "dep:axum", "dep:prometheus", "dep:utoipa", "dep:utoipa-swagger-ui"]
 metrics = ["persistence", "dep:prometheus", "dep:axum", "dep:lazy_static"]
 std = ["bs58/std", "secp256k1/rand-std", "rand/std", "rand/std_rng"]
 core = ["stratum-core"]
@@ -68,11 +77,11 @@ sv1 = ["stratum-core/sv1", "stratum-core/translation", "tokio-util", "serde_json
 with_buffer_pool = ["stratum-core/with_buffer_pool"]
 
 # Convenience feature bundles for different role types
-pool = ["network", "config", "with_buffer_pool", "core", "persistence"]
-jd_client = ["network", "config", "with_buffer_pool", "core"]
+pool = ["network", "config", "with_buffer_pool", "core", "monitoring", "persistence"]
+jd_client = ["network", "config", "with_buffer_pool", "core", "monitoring", "persistence"]
 # Note: jd_server intentionally excludes 'core', 'network', and 'rpc' - it uses crates.io crates directly
 jd_server = ["config"]
-translator = ["network", "config", "sv1", "with_buffer_pool", "core"]
+translator = ["network", "config", "sv1", "with_buffer_pool", "core", "monitoring", "persistence"]
 # Note: mining_device intentionally excludes 'core', 'network', and 'rpc' - it uses crates.io crates directly
 mining_device = ["config"]
 

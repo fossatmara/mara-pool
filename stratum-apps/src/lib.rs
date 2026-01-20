@@ -74,6 +74,9 @@ pub mod task_manager;
 /// Provides the type of template provider that will be used.
 pub mod tp_type;
 
+/// Creates a CoinbaseOutputConstraints message from a list of coinbase outputs
+pub mod coinbase_output_constraints;
+
 /// Persistence abstractions for shares
 ///
 /// Provides a generic persistence framework that can be used across different
@@ -81,3 +84,7 @@ pub mod tp_type;
 /// Features fire-and-forget semantics to avoid blocking the mining hot path.
 #[cfg(feature = "persistence")]
 pub mod persistence;
+
+/// Channel monitoring - expose channel data via HTTP JSON APIs
+#[cfg(feature = "monitoring")]
+pub mod monitoring;
