@@ -1108,24 +1108,18 @@ checksum = "3011d1213f159867b13cfd6ac92d2cd5f1345762c63be3554e84092d85a50bbd"
 
 [[package]]
 name = "hotpath"
-version = "0.1.0"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8658697fad3a1e6f6a7fae7751691b552aa5d7ccf9bb40cab20e66991cbabe29"
+checksum = "3554f9fc054c95f68e9f31196ca3aa77c6ce299f2e5877788e68168d01b7cfab"
 dependencies = [
  "hotpath-macros",
- "tokio",
 ]
 
 [[package]]
 name = "hotpath-macros"
-version = "0.1.0"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "500992f56766a047c28ecc597a3ca2faf71d45d89425390d429cc7560ecaebeb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
+checksum = "9e8cf5fa828dd9b99de52bb85f9027c0d5205971cb3c45842b4bf6d7c7f6c679"
 
 [[package]]
 name = "http"
@@ -2237,7 +2231,6 @@ dependencies = [
  "dirs",
  "futures",
  "generic-array",
- "hotpath",
  "lazy_static",
  "miniscript",
  "prometheus",
