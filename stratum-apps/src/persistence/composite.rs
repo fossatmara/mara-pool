@@ -141,6 +141,9 @@ impl PersistenceBackend for CompositeBackend {
     fn persist_event(&self, event: PersistenceEvent) -> Result<(), PersistenceError> {
         let entity_type = event.entity_type();
         let mut last_error: Option<PersistenceError> = None;
+        // Track fallbacks that have already received this event to avoid duplicates
+        // when multiple routes share the same fallback backend
+        let mut used_fallbacks: Vec<Arc<dyn PersistenceBackend>> = Vec::new();
 
         for route in &self.routes {
             // Skip if this route doesn't handle this entity type
@@ -162,8 +165,18 @@ impl PersistenceBackend for CompositeBackend {
 
                     // Try fallback if configured
                     if let Some(fallback) = &route.fallback {
+                        // Skip if we've already written to this fallback
+                        if used_fallbacks.iter().any(|f| Arc::ptr_eq(f, fallback)) {
+                            tracing::debug!(
+                                route = %route.name,
+                                "Skipping duplicate fallback write"
+                            );
+                            continue;
+                        }
+
                         match fallback.persist_event(event.clone()) {
                             Ok(()) => {
+                                used_fallbacks.push(Arc::clone(fallback));
                                 tracing::debug!(
                                     route = %route.name,
                                     "Fallback backend succeeded"
@@ -559,6 +572,57 @@ mod tests {
         assert_eq!(primary1.count(), 1); // Tried
         assert_eq!(fallback1.count(), 1); // Used as fallback
         assert_eq!(backend2.count(), 1); // Independent, succeeded
+    }
+
+    #[test]
+    fn test_composite_shared_fallback_no_duplicates() {
+        // When multiple routes share the same fallback backend and both primaries fail,
+        // the fallback should only receive the event once (not once per failing route)
+        let primary1 = Arc::new(CountingBackend::failing());
+        let primary2 = Arc::new(CountingBackend::failing());
+        let shared_fallback = Arc::new(CountingBackend::new());
+
+        let routes = vec![
+            BackendRoute::new("route1", primary1.clone(), vec![EntityType::Share])
+                .with_fallback(shared_fallback.clone()),
+            BackendRoute::new("route2", primary2.clone(), vec![EntityType::Share])
+                .with_fallback(shared_fallback.clone()),
+        ];
+
+        let composite = CompositeBackend::new(routes);
+        let event = create_test_event();
+
+        assert!(PersistenceBackend::persist_event(&composite, event).is_ok());
+        assert_eq!(primary1.count(), 1); // Primary 1 was tried
+        assert_eq!(primary2.count(), 1); // Primary 2 was tried
+        // Fallback should only be called ONCE, not twice
+        assert_eq!(shared_fallback.count(), 1);
+    }
+
+    #[test]
+    fn test_composite_different_fallbacks_both_called() {
+        // When routes have different fallback backends, both should be called
+        let primary1 = Arc::new(CountingBackend::failing());
+        let primary2 = Arc::new(CountingBackend::failing());
+        let fallback1 = Arc::new(CountingBackend::new());
+        let fallback2 = Arc::new(CountingBackend::new());
+
+        let routes = vec![
+            BackendRoute::new("route1", primary1.clone(), vec![EntityType::Share])
+                .with_fallback(fallback1.clone()),
+            BackendRoute::new("route2", primary2.clone(), vec![EntityType::Share])
+                .with_fallback(fallback2.clone()),
+        ];
+
+        let composite = CompositeBackend::new(routes);
+        let event = create_test_event();
+
+        assert!(PersistenceBackend::persist_event(&composite, event).is_ok());
+        assert_eq!(primary1.count(), 1);
+        assert_eq!(primary2.count(), 1);
+        // Different fallbacks should each be called once
+        assert_eq!(fallback1.count(), 1);
+        assert_eq!(fallback2.count(), 1);
     }
 
     /// A backend that tracks flush and shutdown calls
