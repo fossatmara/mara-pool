@@ -1,3 +1,4 @@
+# External service for SV1 miners connecting via translator
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,34 +9,45 @@ metadata:
     app.kubernetes.io/component: translator
     app.kubernetes.io/part-of: stratum-v2
   annotations:
-    # Cloud provider annotations for LoadBalancer configuration
-    # AWS NLB for TCP traffic
-    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-    # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    # AWS NLB Configuration for external SV1 miner access
+    # - Use "internet-facing" for public access from external miners
+    # - Use "internal" (default) for private pools / VPN access only
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
     # 
-    # Use monitoring port for NLB health checks (not the SV1 mining port)
+    # Health checks use the monitoring port (not exposed on this LB)
     service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "9092"
     service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/api/v1/health"
     service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
-    # 
-    # GCP
-    # cloud.google.com/load-balancer-type: "External"
 spec:
-  # LoadBalancer exposes the service externally for SV1 miners
   type: LoadBalancer
-  # externalTrafficPolicy: Local preserves client IP (useful for logging)
-  # but may cause uneven load distribution
   externalTrafficPolicy: Cluster
   selector:
     app.kubernetes.io/name: translator-sv2
   ports:
-    # SV1 Stratum port for miners
+    # SV1 Stratum port - for legacy miners via translator
     - name: sv1
       port: 34255
       targetPort: 34255
       protocol: TCP
-    # HTTP Monitoring API (v0.2.0)
-    # Consider: expose via separate ClusterIP service for internal access only
+---
+# Internal service for translator monitoring - NOT exposed to internet
+apiVersion: v1
+kind: Service
+metadata:
+  name: translator-sv2-monitoring
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: translator-sv2
+    app.kubernetes.io/component: translator
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: translator-sv2
+  ports:
+    # HTTP Monitoring API (v0.2.0) - internal only
     - name: monitoring
       port: 9092
       targetPort: 9092

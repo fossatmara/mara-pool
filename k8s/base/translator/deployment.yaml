@@ -41,23 +41,23 @@ spec:
             - /bin/sh
             - -c
             - |
-              echo "Waiting for pool-sv2 to be ready..."
-              until nc -z pool-sv2 34254; do
-                echo "pool-sv2 not ready yet, waiting..."
+              echo "Waiting for pool-sv2-internal to be ready..."
+              until nc -z pool-sv2-internal 34254; do
+                echo "pool-sv2-internal not ready yet, waiting..."
                 sleep 5
               done
-              echo "pool-sv2 is ready!"
+              echo "pool-sv2-internal is ready!"
               # Resolve pool DNS to IP (translator requires IP addresses, not hostnames)
-              POOL_IP=$(nslookup pool-sv2 2>/dev/null | grep -A1 'Name:' | grep 'Address' | awk '{print $2}' | head -1)
+              POOL_IP=$(nslookup pool-sv2-internal 2>/dev/null | grep -A1 'Name:' | grep 'Address' | awk '{print $2}' | head -1)
               if [ -z "$POOL_IP" ]; then
                 # Fallback: try getent if nslookup format differs
-                POOL_IP=$(getent hosts pool-sv2 2>/dev/null | awk '{print $1}' | head -1)
+                POOL_IP=$(getent hosts pool-sv2-internal 2>/dev/null | awk '{print $1}' | head -1)
               fi
               if [ -z "$POOL_IP" ]; then
-                echo "ERROR: Could not resolve pool-sv2 to IP address"
+                echo "ERROR: Could not resolve pool-sv2-internal to IP address"
                 exit 1
               fi
-              echo "Resolved pool-sv2 to IP: $POOL_IP"
+              echo "Resolved pool-sv2-internal to IP: $POOL_IP"
               echo "$POOL_IP" > /shared/pool-ip
           volumeMounts:
             - name: shared

@@ -1,7 +1,42 @@
+# External service for SV2 miners connecting directly to pool
 apiVersion: v1
 kind: Service
 metadata:
   name: pool-sv2
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: pool-sv2
+    app.kubernetes.io/component: pool
+    app.kubernetes.io/part-of: stratum-v2
+  annotations:
+    # AWS NLB Configuration for external SV2 miner access
+    # - Use "internet-facing" for public access from external miners
+    # - Use "internal" (default) for private pools / VPN access only
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    # 
+    # Health checks use the monitoring port (not exposed on this LB)
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "9090"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/api/v1/health"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: pool-sv2
+  ports:
+    # SV2 Mining Protocol port - for native SV2 miners
+    - name: sv2
+      port: 34254
+      targetPort: 34254
+      protocol: TCP
+---
+# Internal service for pool monitoring - NOT exposed to internet
+apiVersion: v1
+kind: Service
+metadata:
+  name: pool-sv2-monitoring
   namespace: sv2-mining
   labels:
     app.kubernetes.io/name: pool-sv2
@@ -12,13 +47,30 @@ spec:
   selector:
     app.kubernetes.io/name: pool-sv2
   ports:
-    # SV2 Mining Protocol port
-    - name: sv2
-      port: 34254
-      targetPort: 34254
-      protocol: TCP
-    # HTTP Monitoring API (v0.2.0)
+    # HTTP Monitoring API (v0.2.0) - internal only
     - name: monitoring
       port: 9090
       targetPort: 9090
+      protocol: TCP
+---
+# Internal service for translator to connect to pool
+# (translator uses this to reach pool within the cluster)
+apiVersion: v1
+kind: Service
+metadata:
+  name: pool-sv2-internal
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: pool-sv2
+    app.kubernetes.io/component: pool
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pool-sv2
+  ports:
+    # SV2 Mining Protocol port - for internal translator connections
+    - name: sv2
+      port: 34254
+      targetPort: 34254
       protocol: TCP
