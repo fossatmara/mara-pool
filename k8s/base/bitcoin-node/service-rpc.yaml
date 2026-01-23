@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitcoin-node-rpc
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: bitcoin-node
+    app.kubernetes.io/component: rpc
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: bitcoin-node
+  ports:
+    - name: rpc
+      port: 8332
+      targetPort: 8332
+      protocol: TCP

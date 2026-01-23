@@ -1,0 +1,35 @@
+# Pool testnet4 configuration patch
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pool-config
+  namespace: sv2-mining
+data:
+  pool-config.toml: |
+    # SV2 Pool Configuration - TESTNET4
+    
+    authority_public_key = "${AUTHORITY_PUBLIC_KEY}"
+    authority_secret_key = "${AUTHORITY_SECRET_KEY}"
+    cert_validity_sec = 3600
+    
+    listen_address = "0.0.0.0:34254"
+    server_id = 1
+    
+    # Testnet4 address (tb1 prefix)
+    coinbase_reward_script = "addr(tb1qa0sm0hxzj0x25rh8gw5xlzwlsfvvyz8u96w3p8)"
+    
+    pool_signature = "Stratum V2 SRI Pool - Testnet4"
+    
+    shares_per_minute = 6.0
+    share_batch_size = 10
+    
+    supported_extensions = []
+    required_extensions = []
+    
+    # HTTP server address for exposing channel data
+    monitoring_address = "0.0.0.0:9090"
+    
+    # NOTE: sv2-apps requires IP:port, not hostname
+    # The init container resolves bitcoin-node-tp to an IP address
+    [template_provider_type.Sv2Tp]
+    address = "${TP_ADDRESS}:8442"

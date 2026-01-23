@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: translator-sv2
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: translator-sv2
+    app.kubernetes.io/component: translator
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: translator-sv2
+  namespaceSelector:
+    matchNames:
+      - sv2-mining
+  endpoints:
+    - port: monitoring
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

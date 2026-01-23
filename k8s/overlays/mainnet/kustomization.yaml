@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Mainnet overlay for SV2 Mining Stack
+# WARNING: Production configuration - use appropriate security measures
+
+namespace: sv2-mining
+
+resources:
+  - ../../base
+
+patches:
+  # Bitcoin configuration for mainnet
+  - path: patches/bitcoin-config.yaml
+  # Pool configuration for mainnet  
+  - path: patches/pool-config.yaml
+  # Storage configuration for full node
+  - path: patches/storage.yaml
+
+commonLabels:
+  network: mainnet
+
+# Mainnet-specific annotations
+commonAnnotations:
+  network.bitcoin: mainnet

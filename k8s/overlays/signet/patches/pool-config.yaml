@@ -1,0 +1,34 @@
+# Pool signet configuration patch
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pool-config
+  namespace: sv2-mining
+data:
+  pool-config.toml: |
+    # SV2 Pool Configuration - SIGNET
+    # Development/Testing configuration
+    
+    authority_public_key = "${AUTHORITY_PUBLIC_KEY}"
+    authority_secret_key = "${AUTHORITY_SECRET_KEY}"
+    cert_validity_sec = 3600
+    
+    listen_address = "0.0.0.0:34254"
+    server_id = 1
+    
+    # Signet address (tb1 prefix, same as testnet)
+    coinbase_reward_script = "addr(tb1qa0sm0hxzj0x25rh8gw5xlzwlsfvvyz8u96w3p8)"
+    
+    pool_signature = "Stratum V2 SRI Pool - Signet Dev"
+    
+    shares_per_minute = 6.0
+    share_batch_size = 10
+    
+    supported_extensions = []
+    required_extensions = []
+    
+    # HTTP server address for exposing channel data
+    monitoring_address = "0.0.0.0:9090"
+    
+    [template_provider_type.Sv2Tp]
+    address = "bitcoin-node-tp:8442"

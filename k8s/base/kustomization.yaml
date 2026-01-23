@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base resources for SV2 Mining Stack
+# Default configuration: signet network
+
+namespace: sv2-mining
+
+resources:
+  # Namespace
+  - namespace.yaml
+  
+  # Secrets (contains placeholder values - override for production)
+  - secrets.yaml
+  
+  # Bitcoin Node (bitcoind + sv2-tp)
+  - bitcoin-node/configmap-bitcoin.yaml
+  - bitcoin-node/configmap-sv2tp.yaml
+  - bitcoin-node/statefulset.yaml
+  - bitcoin-node/service-rpc.yaml
+  - bitcoin-node/service-tp.yaml
+  - bitcoin-node/service-p2p.yaml
+  
+  # Pool
+  - pool/configmap.yaml
+  - pool/deployment.yaml
+  - pool/service.yaml
+  
+  # Translator
+  - translator/configmap.yaml
+  - translator/deployment.yaml
+  - translator/service.yaml
+  - translator/hpa.yaml
+
+# Optional: ServiceMonitors for Prometheus Operator
+# Uncomment if you have Prometheus Operator installed
+# - bitcoin-node/servicemonitor.yaml
+# - pool/servicemonitor.yaml
+# - translator/servicemonitor.yaml
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: stratum-v2
+
+# Image customization
+# Override these values to use your own registry
+images:
+  - name: bitcoin-sv2-node
+    newName: 975050242427.dkr.ecr.us-east-2.amazonaws.com/bitcoin-sv2-node
+    newTag: v30.2
+  - name: stratumv2/pool_sv2
+    newTag: v0.2.0
+  - name: stratumv2/translator_sv2
+    newTag: v0.2.0

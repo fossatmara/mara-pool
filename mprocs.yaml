@@ -1,0 +1,21 @@
+procs:
+  pool-logs:
+    cmd: ["kubectl", "-n", "sv2-mining", "logs", "-f", "deployment/pool-sv2", "-c", "pool"]
+    autostart: true
+
+  translator-logs:
+    cmd: ["kubectl", "-n", "sv2-mining", "logs", "-f", "deployment/translator-sv2", "-c", "translator"]
+    autostart: true
+
+  port-forward:
+    shell: "kubectl -n sv2-mining port-forward svc/translator-sv2 34255:34255"
+    autostart: true
+
+  mujina-miner:
+    cwd: "/Users/garykrause/repos/mujina"
+    shell: "sleep 3 && MUJINA_CPUMINER_THREADS=2 MUJINA_USB_DISABLE=1 MUJINA_POOL_FORCED_RATE=6 MUJINA_POOL_URL='stratum+tcp://127.0.0.1:34255' MUJINA_POOL_USER='testworker.cpu1' RUST_LOG=mujina_miner=info cargo run"
+    autostart: true
+
+  pod-status:
+    shell: "while true; do clear; kubectl -n sv2-mining get pods; sleep 5; done"
+    autostart: true

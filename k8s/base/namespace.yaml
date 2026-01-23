@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv2-mining
+  labels:
+    app.kubernetes.io/name: sv2-mining
+    app.kubernetes.io/part-of: stratum-v2

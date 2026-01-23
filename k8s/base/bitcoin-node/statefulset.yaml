@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bitcoin-node
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: bitcoin-node
+    app.kubernetes.io/component: template-provider
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  serviceName: bitcoin-node
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcoin-node
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bitcoin-node
+        app.kubernetes.io/component: template-provider
+        app.kubernetes.io/part-of: stratum-v2
+      annotations:
+        # Force pod restart when config changes
+        checksum/bitcoin-config: "{{ include (print $.Template.BasePath \"/configmap-bitcoin.yaml\") . | sha256sum }}"
+        checksum/sv2tp-config: "{{ include (print $.Template.BasePath \"/configmap-sv2tp.yaml\") . | sha256sum }}"
+    spec:
+      terminationGracePeriodSeconds: 600  # Give bitcoind time to shutdown cleanly
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: bitcoin-sv2
+          image: 975050242427.dkr.ecr.us-east-2.amazonaws.com/bitcoin-sv2-node:v30.2-mp
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: rpc
+              containerPort: 8332
+              protocol: TCP
+            - name: p2p-mainnet
+              containerPort: 8333
+              protocol: TCP
+            - name: p2p-signet
+              containerPort: 38333
+              protocol: TCP
+            - name: p2p-testnet4
+              containerPort: 48333
+              protocol: TCP
+            - name: sv2-tp
+              containerPort: 8442
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: bitcoin-config
+              mountPath: /config/bitcoin.conf
+              subPath: bitcoin.conf
+              readOnly: true
+            - name: sv2tp-config
+              mountPath: /config/sv2-tp.conf
+              subPath: sv2-tp.conf
+              readOnly: true
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "8Gi"
+              cpu: "2000m"
+          # Liveness probe - check if bitcoind is responsive
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "bitcoin-cli -datadir=/data -conf=/config/bitcoin.conf getblockchaininfo > /dev/null 2>&1"
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 30
+            failureThreshold: 3
+          # Readiness probe - check if node is synced enough to serve templates
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "bitcoin-cli -datadir=/data -conf=/config/bitcoin.conf getblockchaininfo > /dev/null 2>&1"
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 3
+          # Startup probe - allow time for initial sync
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "bitcoin-cli -datadir=/data -conf=/config/bitcoin.conf getblockchaininfo > /dev/null 2>&1"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 30
+            failureThreshold: 60  # 30 minutes to start
+      volumes:
+        - name: bitcoin-config
+          configMap:
+            name: bitcoin-config
+        - name: sv2tp-config
+          configMap:
+            name: sv2tp-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: bitcoin-node
+          app.kubernetes.io/part-of: stratum-v2
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            # Default: 50Gi for signet
+            # Override via kustomize for mainnet (750Gi+) or testnet4 (50Gi)
+            storage: 50Gi
+        # Uncomment and set if you have a specific storage class
+        # storageClassName: fast-ssd

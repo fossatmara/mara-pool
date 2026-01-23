@@ -1,0 +1,36 @@
+# Pool mainnet configuration patch
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pool-config
+  namespace: sv2-mining
+data:
+  pool-config.toml: |
+    # SV2 Pool Configuration - MAINNET
+    # WARNING: Production configuration
+    
+    authority_public_key = "${AUTHORITY_PUBLIC_KEY}"
+    authority_secret_key = "${AUTHORITY_SECRET_KEY}"
+    cert_validity_sec = 3600
+    
+    listen_address = "0.0.0.0:34254"
+    server_id = 1
+    
+    # IMPORTANT: Replace with your mainnet receiving address!
+    # Format: addr(<your-bc1-address>)
+    coinbase_reward_script = "addr(bc1qchangeme)"
+    
+    pool_signature = "Stratum V2 Pool"
+    
+    # Production difficulty settings
+    shares_per_minute = 6.0
+    share_batch_size = 10
+    
+    supported_extensions = []
+    required_extensions = []
+    
+    # HTTP server address for exposing channel data
+    monitoring_address = "0.0.0.0:9090"
+    
+    [template_provider_type.Sv2Tp]
+    address = "bitcoin-node-tp:8442"

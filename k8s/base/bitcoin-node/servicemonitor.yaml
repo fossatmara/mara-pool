@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bitcoin-node
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: bitcoin-node
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bitcoin-node
+  namespaceSelector:
+    matchNames:
+      - sv2-mining
+  endpoints:
+    # Note: Bitcoin Core doesn't expose Prometheus metrics natively
+    # You would need to add a sidecar exporter like bitcoin-prometheus-exporter
+    # For now, this ServiceMonitor is a placeholder for future metrics
+    #
+    # If you add a metrics exporter, uncomment:
+    # - port: metrics
+    #   path: /metrics
+    #   interval: 30s
+    []
