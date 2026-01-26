@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcoin-config
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: bitcoin-node
+    app.kubernetes.io/component: bitcoin-core
+    app.kubernetes.io/part-of: stratum-v2
+data:
+  bitcoin.conf: |
+    # Bitcoin Core Configuration for SV2 Mining
+    # Network is configured via overlay patches
+    
+    # ===================
+    # Network Settings
+    # ===================
+    # Default: signet (safe for testing)
+    # Override via kustomize overlay for mainnet/testnet4
+    chain=signet
+    
+    # ===================
+    # Server Settings
+    # ===================
+    server=1
+    # Transaction index required for sv2-tp
+    txindex=1
+    
+    # ===================
+    # RPC Settings
+    # ===================
+    rpcbind=0.0.0.0
+    # Allow connections from Kubernetes pod network
+    rpcallowip=10.0.0.0/8
+    rpcallowip=172.16.0.0/12
+    rpcallowip=192.168.0.0/16
+    rpcallowip=127.0.0.1
+    
+    # RPC credentials (should match secret)
+    rpcuser=poolrpc
+    rpcpassword=changeme-generate-secure-password
+    
+    # ===================
+    # P2P Settings
+    # ===================
+    listen=1
+    # Limit connections to reduce resource usage
+    maxconnections=50
+    
+    # ===================
+    # Performance Settings
+    # ===================
+    # Database cache (MB) - adjust based on available memory
+    dbcache=1024
+    # Mempool size (MB)
+    maxmempool=300
+    
+    # ===================
+    # Pruning
+    # ===================
+    # 0 = full node (no pruning)
+    # >0 = pruned node (value in MiB, minimum 550)
+    # For signet/testnet, pruning is usually fine
+    # For mainnet production, consider full node
+    prune=0
+    
+    # ===================
+    # IPC
+    # ===================
+    # IPC is enabled via command line: -ipcbind=unix
+    # Socket created at: /data/.bitcoin/node.sock

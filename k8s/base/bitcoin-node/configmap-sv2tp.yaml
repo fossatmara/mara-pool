@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sv2tp-config
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: bitcoin-node
+    app.kubernetes.io/component: sv2-tp
+    app.kubernetes.io/part-of: stratum-v2
+data:
+  sv2-tp.conf: |
+    # SV2 Template Provider Configuration
+    # https://github.com/stratum-mining/sv2-tp
+    
+    # ===================
+    # Network
+    # ===================
+    # Must match bitcoin.conf chain setting
+    # Override via kustomize overlay
+    chain=signet
+    
+    # ===================
+    # IPC Connection
+    # ===================
+    # Connect to Bitcoin Core via Unix socket
+    ipcconnect=unix
+    # Socket path is automatically detected from datadir
+    
+    # ===================
+    # Template Provider Server
+    # ===================
+    # Port for SV2 Template Distribution Protocol
+    sv2port=8442
+    # Bind address (0.0.0.0 for all interfaces)
+    sv2bind=0.0.0.0
+    
+    # ===================
+    # Template Settings
+    # ===================
+    # Interval between template updates (seconds)
+    sv2interval=30
+    # Fee delta threshold for pushing new templates (satoshis)
+    sv2feedelta=1000
+    
+    # ===================
+    # Logging
+    # ===================
+    debug=sv2
+    loglevel=sv2:trace
+    
+    # Log file (relative to datadir)
+    # debuglogfile=sv2-debug.log

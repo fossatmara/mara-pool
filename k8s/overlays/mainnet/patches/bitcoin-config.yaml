@@ -1,0 +1,75 @@
+# Bitcoin Core mainnet configuration patch
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bitcoin-config
+  namespace: sv2-mining
+data:
+  bitcoin.conf: |
+    # Bitcoin Core Configuration - MAINNET
+    # ===================
+    # Network Settings
+    # ===================
+    chain=main
+    
+    # ===================
+    # Server Settings
+    # ===================
+    server=1
+    txindex=1
+    
+    # ===================
+    # RPC Settings
+    # ===================
+    rpcbind=0.0.0.0
+    rpcallowip=10.0.0.0/8
+    rpcallowip=172.16.0.0/12
+    rpcallowip=192.168.0.0/16
+    rpcallowip=127.0.0.1
+    
+    # RPC credentials (should be overridden via secret)
+    rpcuser=poolrpc
+    rpcpassword=changeme-generate-secure-password
+    
+    # ===================
+    # P2P Settings
+    # ===================
+    listen=1
+    port=8333
+    maxconnections=50
+    
+    # ===================
+    # Performance Settings
+    # ===================
+    # Mainnet requires more resources
+    dbcache=2048
+    maxmempool=500
+    
+    # ===================
+    # Pruning
+    # ===================
+    # Full node for mainnet (no pruning)
+    prune=0
+---
+# sv2-tp mainnet configuration patch
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sv2tp-config
+  namespace: sv2-mining
+data:
+  sv2-tp.conf: |
+    # SV2 Template Provider Configuration - MAINNET
+    chain=main
+    
+    ipcconnect=unix
+    
+    sv2port=8442
+    sv2bind=0.0.0.0
+    
+    # Mainnet: faster updates for production
+    sv2interval=20
+    sv2feedelta=1000
+    
+    debug=sv2
+    loglevel=sv2:info

@@ -1,0 +1,154 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pool-sv2
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: pool-sv2
+    app.kubernetes.io/component: pool
+    app.kubernetes.io/version: "v0.2.0"
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  # Pool is NOT horizontally scalable - single instance only
+  replicas: 1
+  strategy:
+    # Recreate strategy since we only have one replica
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pool-sv2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pool-sv2
+        app.kubernetes.io/component: pool
+        app.kubernetes.io/version: "v0.2.0"
+        app.kubernetes.io/part-of: stratum-v2
+      annotations:
+        # Prometheus scraping annotations (alternative to ServiceMonitor)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: default
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        # Wait for sv2-tp (Template Provider) to be ready
+        - name: wait-for-tp
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for sv2-tp (Template Provider) to be ready..."
+              until nc -z bitcoin-node-tp 8442; do
+                echo "sv2-tp not ready yet, waiting..."
+                sleep 5
+              done
+              echo "sv2-tp is ready!"
+          securityContext:
+            allowPrivilegeEscalation: false
+        # Render config template with secrets and resolve DNS to IP
+        - name: config-renderer
+          image: bhgedigital/envsubst:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Resolving bitcoin-node-tp to IP address..."
+              # sv2-apps requires IP addresses, not hostnames (uses .parse().unwrap())
+              export TP_ADDRESS=$(getent hosts bitcoin-node-tp | awk '{print $1}')
+              if [ -z "$TP_ADDRESS" ]; then
+                echo "ERROR: Could not resolve bitcoin-node-tp"
+                exit 1
+              fi
+              echo "Resolved bitcoin-node-tp to $TP_ADDRESS"
+              
+              echo "Rendering pool configuration..."
+              envsubst < /config-template/pool-config.toml > /config/pool-config.toml
+              chmod 644 /config/pool-config.toml
+              echo "Configuration rendered successfully"
+              cat /config/pool-config.toml | grep -v "secret_key"
+          envFrom:
+            - secretRef:
+                name: sv2-authority-keys
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+              readOnly: true
+            - name: config
+              mountPath: /config
+          securityContext:
+            allowPrivilegeEscalation: false
+      containers:
+        - name: pool
+          image: stratumv2/pool_sv2:v0.2.0
+          imagePullPolicy: IfNotPresent
+          workingDir: /config
+          ports:
+            - name: sv2
+              containerPort: 34254
+              protocol: TCP
+            - name: monitoring
+              containerPort: 9090
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          # Health checks using the v0.2.0 monitoring API
+          # API docs at /swagger-ui show health is at /api/v1/health
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: monitoring
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: monitoring
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: monitoring
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30  # 2.5 minutes to start
+      volumes:
+        - name: config-template
+          configMap:
+            name: pool-config
+        - name: config
+          emptyDir:
+            medium: Memory
+      # Prefer scheduling on a node with the bitcoin-node for lower latency
+      affinity:
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: bitcoin-node
+                topologyKey: kubernetes.io/hostname

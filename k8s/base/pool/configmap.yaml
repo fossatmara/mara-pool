@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pool-config
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: pool-sv2
+    app.kubernetes.io/component: pool
+    app.kubernetes.io/part-of: stratum-v2
+data:
+  pool-config.toml: |
+    # SV2 Pool Configuration
+    # https://github.com/stratum-mining/sv2-apps/tree/main/pool-apps/pool
+    #
+    # Environment variables (from secrets) are substituted at runtime:
+    #   ${AUTHORITY_PUBLIC_KEY}
+    #   ${AUTHORITY_SECRET_KEY}
+    
+    # ===================
+    # Authority Keys
+    # ===================
+    # Noise protocol key pair for encrypted connections
+    # These are substituted from Kubernetes Secret via init container
+    authority_public_key = "${AUTHORITY_PUBLIC_KEY}"
+    authority_secret_key = "${AUTHORITY_SECRET_KEY}"
+    
+    # Certificate validity period (seconds)
+    cert_validity_sec = 3600
+    
+    # ===================
+    # Server Settings
+    # ===================
+    # Listen address for SV2 Mining Protocol connections
+    listen_address = "0.0.0.0:34254"
+    
+    # Server ID (unique across pool servers for search space allocation)
+    server_id = 1
+    
+    # ===================
+    # Coinbase Configuration
+    # ===================
+    # Coinbase outputs specified as descriptors
+    # https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki
+    # Override via kustomize overlay for different networks
+    coinbase_reward_script = "addr(tb1qa0sm0hxzj0x25rh8gw5xlzwlsfvvyz8u96w3p8)"
+    
+    # Pool signature included in coinbase transaction
+    pool_signature = "Stratum V2 SRI Pool"
+    
+    # ===================
+    # Difficulty Settings
+    # ===================
+    # Expected shares per minute (determines difficulty targets)
+    shares_per_minute = 6.0
+    
+    # Number of shares to acknowledge in a batch
+    share_batch_size = 10
+    
+    # ===================
+    # Protocol Extensions
+    # ===================
+    # Extensions the pool supports (will accept if requested by clients)
+    supported_extensions = [
+        # 0x0002,  # Worker-Specific Hashrate Tracking
+    ]
+    
+    # Extensions the pool requires (clients must support to connect)
+    required_extensions = [
+    ]
+    
+    # ===================
+    # Monitoring
+    # ===================
+    # HTTP server address for exposing channel data
+    monitoring_address = "0.0.0.0:9090"
+    
+    # ===================
+    # Template Provider
+    # ===================
+    # Connect to sv2-tp via network (SV2 Template Distribution Protocol)
+    # This decouples the Pool from the Bitcoin node pod
+    # NOTE: sv2-apps uses .parse().unwrap() which requires IP:port, not hostname
+    # The init container resolves bitcoin-node-tp to an IP address
+    [template_provider_type.Sv2Tp]
+    address = "${TP_ADDRESS}:8442"

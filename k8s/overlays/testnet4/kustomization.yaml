@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Testnet4 overlay for SV2 Mining Stack
+# Good for testing with real-world conditions
+
+namespace: sv2-mining
+
+resources:
+  - ../../base
+
+patches:
+  # Bitcoin configuration for testnet4
+  - path: patches/bitcoin-config.yaml
+  # Pool configuration for testnet4
+  - path: patches/pool-config.yaml
+
+commonLabels:
+  network: testnet4
+
+commonAnnotations:
+  network.bitcoin: testnet4

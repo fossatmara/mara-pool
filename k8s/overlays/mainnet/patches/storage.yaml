@@ -1,0 +1,21 @@
+# Storage patch for mainnet full node
+# Mainnet blockchain requires ~750GB+ as of 2024
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bitcoin-node
+  namespace: sv2-mining
+spec:
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            # Mainnet full node storage
+            # Recommend 1Ti for growth headroom
+            storage: 750Gi
+        # Uncomment and set your storage class
+        # storageClassName: fast-ssd

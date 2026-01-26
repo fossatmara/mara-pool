@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: translator-config
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: translator-sv2
+    app.kubernetes.io/component: translator
+    app.kubernetes.io/part-of: stratum-v2
+data:
+  translator-config.toml: |
+    # SV2 Translator Proxy Configuration
+    # https://github.com/stratum-mining/sv2-apps/tree/main/miner-apps/translator
+    #
+    # Bridges SV1 miners to SV2 pools
+    # Environment variables (from secrets) are substituted at runtime:
+    #   ${AUTHORITY_PUBLIC_KEY}
+    
+    # ===================
+    # Downstream (SV1 Miners)
+    # ===================
+    # Address and port for SV1 miner connections
+    downstream_address = "0.0.0.0"
+    downstream_port = 34255
+    
+    # ===================
+    # Protocol Version
+    # ===================
+    max_supported_version = 2
+    min_supported_version = 2
+    
+    # ===================
+    # Extranonce Configuration
+    # ===================
+    # Size of the rollable extranonce2 for downstream miners
+    # Max value for CGminer: 8
+    # Min value: 2
+    downstream_extranonce2_size = 4
+    
+    # ===================
+    # User Identity
+    # ===================
+    # Username for pool connection
+    # Each miner gets appended counter (e.g., sv2-translator.miner1)
+    user_identity = "sv2-translator"
+    
+    # ===================
+    # Channel Aggregation
+    # ===================
+    # true = all miners share one upstream channel
+    # false = each miner gets its own channel
+    aggregate_channels = false
+    
+    # ===================
+    # Protocol Extensions
+    # ===================
+    # Extensions the translator supports
+    supported_extensions = [
+        # 0x0002,  # Worker-Specific Hashrate Tracking
+    ]
+    
+    # Extensions the translator requires from upstream
+    required_extensions = [
+    ]
+    
+    # ===================
+    # Monitoring
+    # ===================
+    # HTTP server address for exposing channel data
+    monitoring_address = "0.0.0.0:9092"
+    
+    # ===================
+    # Difficulty Configuration
+    # ===================
+    [downstream_difficulty_config]
+    # Minimum hashrate of weakest miner (hashes/sec)
+    # For CPU mining testing: ~2 MH/s = 2_000_000.0
+    # For ASIC mining: 10 TH/s = 10_000_000_000_000.0
+    min_individual_miner_hashrate = 2_000_000.0
+    # Target shares per minute
+    shares_per_minute = 6.0
+    # Enable variable difficulty adjustment
+    enable_vardiff = true
+    
+    # Interval in seconds for sending keepalive jobs to downstream miners
+    # NOTE: This is a top-level setting, outside [downstream_difficulty_config]
+    job_keepalive_interval_secs = 60
+    
+    # ===================
+    # Upstream Pool Connection
+    # ===================
+    [[upstreams]]
+    # Note: POOL_ADDRESS is resolved from DNS by init container
+    # (translator requires IP address, not hostname)
+    address = "${POOL_ADDRESS}"
+    port = 34254
+    authority_pubkey = "${AUTHORITY_PUBLIC_KEY}"

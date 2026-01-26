@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Root kustomization - deploys base configuration (signet by default)
+# For network-specific deployments, use overlays:
+#   kubectl apply -k k8s/overlays/mainnet/
+#   kubectl apply -k k8s/overlays/testnet4/
+#   kubectl apply -k k8s/overlays/signet/
+
+resources:
+  - base

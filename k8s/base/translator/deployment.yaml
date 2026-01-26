@@ -1,0 +1,168 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: translator-sv2
+  namespace: sv2-mining
+  labels:
+    app.kubernetes.io/name: translator-sv2
+    app.kubernetes.io/component: translator
+    app.kubernetes.io/version: "v0.2.0"
+    app.kubernetes.io/part-of: stratum-v2
+spec:
+  # Translator IS horizontally scalable
+  # HPA manages actual replica count (2-10)
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: translator-sv2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: translator-sv2
+        app.kubernetes.io/component: translator
+        app.kubernetes.io/version: "v0.2.0"
+        app.kubernetes.io/part-of: stratum-v2
+      annotations:
+        # Prometheus scraping annotations (alternative to ServiceMonitor)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9092"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: default
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        # Wait for pool to be ready and resolve its IP
+        - name: wait-for-pool
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for pool-sv2-internal to be ready..."
+              until nc -z pool-sv2-internal 34254; do
+                echo "pool-sv2-internal not ready yet, waiting..."
+                sleep 5
+              done
+              echo "pool-sv2-internal is ready!"
+              # Resolve pool DNS to IP (translator requires IP addresses, not hostnames)
+              POOL_IP=$(nslookup pool-sv2-internal 2>/dev/null | grep -A1 'Name:' | grep 'Address' | awk '{print $2}' | head -1)
+              if [ -z "$POOL_IP" ]; then
+                # Fallback: try getent if nslookup format differs
+                POOL_IP=$(getent hosts pool-sv2-internal 2>/dev/null | awk '{print $1}' | head -1)
+              fi
+              if [ -z "$POOL_IP" ]; then
+                echo "ERROR: Could not resolve pool-sv2-internal to IP address"
+                exit 1
+              fi
+              echo "Resolved pool-sv2-internal to IP: $POOL_IP"
+              echo "$POOL_IP" > /shared/pool-ip
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+          securityContext:
+            allowPrivilegeEscalation: false
+        # Render config template with secrets and resolved IP
+        - name: config-renderer
+          image: bhgedigital/envsubst:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Rendering translator configuration..."
+              # Read resolved pool IP
+              POOL_IP=$(cat /shared/pool-ip)
+              echo "Using pool IP: $POOL_IP"
+              # Export for envsubst
+              export POOL_IP
+              export POOL_ADDRESS="$POOL_IP"
+              # Substitute all variables including POOL_ADDRESS
+              envsubst < /config-template/translator-config.toml > /config/translator-config.toml
+              chmod 644 /config/translator-config.toml
+              echo "Configuration rendered successfully"
+              cat /config/translator-config.toml
+          envFrom:
+            - secretRef:
+                name: sv2-authority-keys
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+              readOnly: true
+            - name: config
+              mountPath: /config
+            - name: shared
+              mountPath: /shared
+          securityContext:
+            allowPrivilegeEscalation: false
+      containers:
+        - name: translator
+          image: stratumv2/translator_sv2:v0.2.0
+          imagePullPolicy: IfNotPresent
+          workingDir: /config
+          ports:
+            - name: sv1
+              containerPort: 34255
+              protocol: TCP
+            - name: monitoring
+              containerPort: 9092
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          # Health checks using the v0.2.0 monitoring API
+          # API docs at /swagger-ui show health is at /api/v1/health
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: monitoring
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: monitoring
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: monitoring
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12  # 1 minute to start
+      volumes:
+        - name: config-template
+          configMap:
+            name: translator-config
+        - name: config
+          emptyDir:
+            medium: Memory
+        - name: shared
+          emptyDir:
+            medium: Memory
+      # Spread translator pods across nodes for high availability
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: translator-sv2
