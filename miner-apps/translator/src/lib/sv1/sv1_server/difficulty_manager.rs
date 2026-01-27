@@ -112,25 +112,33 @@ impl DifficultyManager {
         // Process each downstream and determine update strategy
         for (downstream_id, vardiff_state) in vardiff_map.iter() {
             debug!("Updating vardiff for downstream_id: {}", downstream_id);
-            let mut vardiff = vardiff_state.write().unwrap();
+            let mut vardiff = match vardiff_state.write() {
+                Ok(v) => v,
+                Err(e) => {
+                    error!(
+                        "Failed to acquire vardiff write lock for downstream {}: {:?}",
+                        downstream_id, e
+                    );
+                    continue;
+                }
+            };
 
             // Get current state from downstream
             let Some((channel_id, hashrate, target, upstream_target)) = sv1_server_data
                 .super_safe_lock(|data| {
                     data.downstreams.get(downstream_id).and_then(|ds| {
                         ds.downstream_data.super_safe_lock(|d| {
-                            Some((
-                                d.channel_id,
-                                d.hashrate.unwrap(), /* It's safe to unwrap because we know that
-                                                      * the downstream has a hashrate (we are
-                                                      * doing vardiff) */
-                                d.target,
-                                d.upstream_target,
-                            ))
+                            // Safely handle missing hashrate - skip this downstream if not set
+                            d.hashrate
+                                .map(|hr| (d.channel_id, hr, d.target, d.upstream_target))
                         })
                     })
                 })
             else {
+                debug!(
+                    "Skipping vardiff for downstream {}: downstream not found or hashrate not set",
+                    downstream_id
+                );
                 continue;
             };
 
@@ -268,19 +276,22 @@ impl DifficultyManager {
                             })
                         })
                         .min()
-                        .expect("At least one downstream should exist")
                 });
+
+                let Some(min_target) = min_target else {
+                    warn!("No downstreams available for aggregated vardiff update, skipping");
+                    return;
+                };
 
                 // Get total hashrate of ALL downstreams, not just the ones with updates
                 let total_hashrate: Hashrate = sv1_server_data.super_safe_lock(|data| {
                     data.downstreams
                         .values()
-                        .map(|downstream| {
+                        .filter_map(|downstream| {
                             downstream.downstream_data.super_safe_lock(|d| {
                                 // Use pending_hashrate if available, otherwise current hashrate
-                                // It's safe to unwrap because we know that the downstream has a
-                                // hashrate (we are doing vardiff)
-                                d.pending_hashrate.unwrap_or(d.hashrate.unwrap())
+                                // Skip downstreams without hashrate set
+                                d.pending_hashrate.or(d.hashrate)
                             })
                         })
                         .sum()
@@ -586,12 +597,11 @@ impl DifficultyManager {
                 let total_hashrate: Hashrate = data
                     .downstreams
                     .values()
-                    .map(|downstream| {
+                    .filter_map(|downstream| {
                         downstream.downstream_data.super_safe_lock(|d| {
                             // Use pending_hashrate if available, otherwise current hashrate
-                            // It's safe to unwrap because we know that the downstream has a
-                            // hashrate (we are doing vardiff)
-                            d.pending_hashrate.unwrap_or(d.hashrate.unwrap())
+                            // Skip downstreams without hashrate set
+                            d.pending_hashrate.or(d.hashrate)
                         })
                     })
                     .sum();

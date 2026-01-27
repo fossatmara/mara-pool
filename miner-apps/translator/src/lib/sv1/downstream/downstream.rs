@@ -1,4 +1,4 @@
-use super::DownstreamMessages;
+use super::{DownstreamMessages, SubmitShareWithChannelId};
 use crate::{
     error::TproxyError,
     status::{handle_error, StatusSender},
@@ -6,7 +6,7 @@ use crate::{
         downstream::{channel::DownstreamChannelState, data::DownstreamData},
         sv1_server::data::Sv1ServerData,
     },
-    utils::ShutdownMessage,
+    utils::{validate_sv1_share, ShutdownMessage},
 };
 use async_channel::{Receiver, Sender};
 use std::sync::Arc;
@@ -15,7 +15,9 @@ use stratum_apps::{
     stratum_core::{
         bitcoin::Target,
         sv1_api::{
+            client_to_server,
             json_rpc::{self, Message},
+            methods::ParsingMethodError,
             server_to_client, IsServer,
         },
     },
@@ -417,7 +419,19 @@ impl Downstream {
             return Ok(());
         }
 
-        // Channel is established, process message normally
+        // Check if this is a mining.submit message - handle it specially to avoid deadlock
+        // The deadlock occurs because handle_message -> handle_submit -> validate_sv1_share
+        // tries to acquire sv1_server_data lock while we hold downstream_data lock.
+        // By handling submit outside the downstream_data lock, we break the lock ordering violation.
+        if let Message::StandardRequest(ref request) = message {
+            if request.method == "mining.submit" {
+                return self
+                    .handle_submit_message_without_nested_lock(&message)
+                    .await;
+            }
+        }
+
+        // Channel is established, process non-submit messages normally
         let response = self
             .downstream_data
             .super_safe_lock(|data| data.handle_message(message.clone()));
@@ -460,19 +474,134 @@ impl Downstream {
             }
         }
 
-        // Check if there's a pending share to send to the Sv1Server
-        let pending_share = self
-            .downstream_data
-            .super_safe_lock(|d| d.pending_share.take());
-        if let Some(share) = pending_share {
+        Ok(())
+    }
+
+    /// Handles mining.submit messages without holding the downstream_data lock during validation.
+    ///
+    /// This method breaks the lock ordering violation that caused deadlocks:
+    /// - Previously: downstream_data lock held -> validate_sv1_share -> sv1_server_data lock
+    /// - Now: sv1_server_data lock (for job lookup) -> downstream_data lock (for state update)
+    ///
+    /// The key insight is that share validation only needs to READ from sv1_server_data (job list)
+    /// and downstream_data (extranonce, target, etc.), so we can:
+    /// 1. Clone the job list from sv1_server_data (quick lock, release immediately)
+    /// 2. Clone validation params from downstream_data (quick lock, release immediately)  
+    /// 3. Do validation without holding any locks
+    /// 4. Update downstream_data with result (quick lock)
+    async fn handle_submit_message_without_nested_lock(
+        self: &Arc<Self>,
+        message: &Message,
+    ) -> Result<(), TproxyError> {
+        // Parse the submit request from StandardRequest
+        let submit: client_to_server::Submit<'static> = match message {
+            Message::StandardRequest(request) => {
+                request
+                    .clone()
+                    .try_into()
+                    .map_err(|e: ParsingMethodError| {
+                        error!("Down: Failed to parse mining.submit: {:?}", e);
+                        TproxyError::SV1Error
+                    })?
+            }
+            _ => {
+                error!("Down: Expected StandardRequest for mining.submit");
+                return Err(TproxyError::SV1Error);
+            }
+        };
+
+        // Step 1: Extract validation parameters from downstream_data (quick lock, release immediately)
+        let (
+            channel_id,
+            target,
+            extranonce1,
+            version_rolling_mask,
+            sv1_server_data,
+            downstream_id,
+            extranonce2_len,
+            last_job_version,
+        ) = self.downstream_data.super_safe_lock(|d| {
+            (
+                d.channel_id,
+                d.target,
+                d.extranonce1.clone(),
+                d.version_rolling_mask.clone(),
+                d.sv1_server_data.clone(),
+                d.downstream_id,
+                d.extranonce2_len,
+                d.last_job_version_field,
+            )
+        });
+
+        let channel_id = match channel_id {
+            Some(id) => id,
+            None => {
+                error!("Cannot submit share: channel_id is None (waiting for OpenExtendedMiningChannelSuccess)");
+                // Send rejection response
+                let response = submit.respond(false);
+                self.downstream_channel_state
+                    .downstream_sv1_sender
+                    .send(response.into())
+                    .await
+                    .map_err(|_| TproxyError::ChannelErrorSender)?;
+                return Ok(());
+            }
+        };
+
+        info!(
+            "Received mining.submit from SV1 downstream for channel id: {}",
+            channel_id
+        );
+
+        // Step 2: Validate the share WITHOUT holding downstream_data lock
+        // This is the key fix - validate_sv1_share acquires sv1_server_data lock,
+        // but we're no longer holding downstream_data lock at this point
+        let is_valid_share = validate_sv1_share(
+            &submit,
+            target,
+            extranonce1.clone(),
+            version_rolling_mask.clone(),
+            sv1_server_data,
+            channel_id,
+        )
+        .unwrap_or(false);
+
+        // Step 3: Send response to miner (clone submit since we need it later)
+        let response = submit.clone().respond(is_valid_share);
+        self.downstream_channel_state
+            .downstream_sv1_sender
+            .send(response.into())
+            .await
+            .map_err(|e| {
+                error!(
+                    "Down: Failed to send submit response to downstream: {:?}",
+                    e
+                );
+                TproxyError::ChannelErrorSender
+            })?;
+
+        // Step 4: If valid, send share to SV1 server for upstream submission
+        if is_valid_share {
+            let share_msg = SubmitShareWithChannelId {
+                channel_id,
+                downstream_id,
+                share: submit,
+                extranonce: extranonce1,
+                extranonce2_len,
+                version_rolling_mask,
+                job_version: last_job_version,
+            };
+
             self.downstream_channel_state
                 .sv1_server_sender
-                .send(DownstreamMessages::SubmitShares(share))
+                .send(DownstreamMessages::SubmitShares(share_msg))
                 .await
                 .map_err(|e| {
                     error!("Down: Failed to send share to SV1 server: {:?}", e);
                     TproxyError::ChannelErrorSender
                 })?;
+        } else {
+            error!("Invalid share for channel id: {}", channel_id);
         }
 
         Ok(())
@@ -533,5 +662,148 @@ impl Downstream {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+    use stratum_apps::custom_mutex::Mutex;
+
+    /// Test that validates the lock ordering fix for the deadlock scenario.
+    ///
+    /// Before the fix, the following pattern caused deadlocks:
+    /// - Task A: holds downstream_data lock -> calls validate_sv1_share -> tries sv1_server_data lock
+    /// - Task B: holds sv1_server_data lock -> iterates downstreams -> tries downstream_data lock
+    ///
+    /// After the fix, mining.submit handling extracts data from downstream_data first,
+    /// releases the lock, then acquires sv1_server_data for validation.
+    ///
+    /// This test simulates the concurrent access pattern to verify no deadlock occurs.
+    #[test]
+    fn test_lock_ordering_no_deadlock() {
+        // Create shared data structures similar to production
+        let sv1_server_data = Arc::new(Mutex::new(0u32)); // Simplified stand-in
+        let downstream_data = Arc::new(Mutex::new(0u32)); // Simplified stand-in
+
+        let sv1_server_data_clone = sv1_server_data.clone();
+        let downstream_data_clone = downstream_data.clone();
+
+        // Simulate the FIXED pattern (what handle_submit_message_without_nested_lock does):
+        // 1. Quick lock on downstream_data to extract data
+        // 2. Release downstream_data
+        // 3. Lock sv1_server_data for validation
+        let handle1 = thread::spawn(move || {
+            for _ in 0..100 {
+                // Step 1: Extract from downstream_data (quick lock, release immediately)
+                let _extracted = downstream_data_clone.super_safe_lock(|d| *d);
+                // downstream_data lock is now released
+
+                // Step 2: Acquire sv1_server_data for validation (no nested lock!)
+                sv1_server_data_clone.super_safe_lock(|s| {
+                    *s += 1;
+                });
+
+                thread::sleep(Duration::from_micros(10));
+            }
+        });
+
+        let sv1_server_data_clone2 = sv1_server_data.clone();
+        let downstream_data_clone2 = downstream_data.clone();
+
+        // Simulate vardiff loop pattern (holds sv1_server_data, accesses downstream_data)
+        let handle2 = thread::spawn(move || {
+            for _ in 0..100 {
+                // Vardiff pattern: hold sv1_server_data, then access downstream_data
+                sv1_server_data_clone2.super_safe_lock(|s| {
+                    *s += 1;
+                    // Access downstream_data while holding sv1_server_data
+                    downstream_data_clone2.super_safe_lock(|d| {
+                        *d += 1;
+                    });
+                });
+
+                thread::sleep(Duration::from_micros(10));
+            }
+        });
+
+        // If this test completes without hanging, the lock ordering is correct
+        // Set a timeout to detect deadlock
+        let timeout = Duration::from_secs(5);
+        let start = std::time::Instant::now();
+
+        loop {
+            if handle1.is_finished() && handle2.is_finished() {
+                break;
+            }
+            if start.elapsed() > timeout {
+                panic!("Test timed out - possible deadlock detected!");
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        handle1.join().expect("Thread 1 panicked");
+        handle2.join().expect("Thread 2 panicked");
+
+        // Verify work was done
+        let final_server = sv1_server_data.super_safe_lock(|s| *s);
+        let final_downstream = downstream_data.super_safe_lock(|d| *d);
+        assert!(
+            final_server > 0,
+            "sv1_server_data should have been modified"
+        );
+        assert!(
+            final_downstream > 0,
+            "downstream_data should have been modified"
+        );
+    }
+
+    /// Test that demonstrates the OLD deadlock-prone pattern (for documentation).
+    /// This test is ignored by default as it WILL deadlock.
+    /// Run with: cargo test test_old_deadlock_pattern -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_old_deadlock_pattern_demonstration() {
+        let sv1_server_data = Arc::new(Mutex::new(0u32));
+        let downstream_data = Arc::new(Mutex::new(0u32));
+
+        let sv1_server_data_clone = sv1_server_data.clone();
+        let downstream_data_clone = downstream_data.clone();
+
+        // OLD PATTERN (causes deadlock): hold downstream_data, then try sv1_server_data
+        let handle1 = thread::spawn(move || {
+            for _ in 0..100 {
+                downstream_data_clone.super_safe_lock(|_d| {
+                    // While holding downstream_data, try to acquire sv1_server_data
+                    // This is the OLD pattern that caused deadlocks
+                    sv1_server_data_clone.super_safe_lock(|s| {
+                        *s += 1;
+                    });
+                });
+                thread::sleep(Duration::from_micros(10));
+            }
+        });
+
+        let sv1_server_data_clone2 = sv1_server_data.clone();
+        let downstream_data_clone2 = downstream_data.clone();
+
+        // Vardiff pattern: hold sv1_server_data, then try downstream_data
+        let handle2 = thread::spawn(move || {
+            for _ in 0..100 {
+                sv1_server_data_clone2.super_safe_lock(|_s| {
+                    // While holding sv1_server_data, try to acquire downstream_data
+                    downstream_data_clone2.super_safe_lock(|d| {
+                        *d += 1;
+                    });
+                });
+                thread::sleep(Duration::from_micros(10));
+            }
+        });
+
+        // This will likely hang due to deadlock
+        handle1.join().expect("Thread 1 panicked");
+        handle2.join().expect("Thread 2 panicked");
     }
 }

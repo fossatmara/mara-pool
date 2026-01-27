@@ -462,6 +462,8 @@ impl ChannelManager {
                     })?;
             }
             Mining::SubmitSharesExtended(mut m) => {
+                let original_channel_id = m.channel_id;
+                let original_sequence_number = m.sequence_number;
                 let value = self.channel_manager_data.super_safe_lock(|c| {
                     let extended_channel = c.extended_channels.get(&m.channel_id);
                     if let Some(extended_channel) = extended_channel {
@@ -471,10 +473,23 @@ impl ChannelManager {
                                 channel.validate_share(m.clone()),
                                 channel.get_share_accounting().clone(),
                             ));
+                        } else {
+                            error!("SubmitSharesExtended: RwLock poisoned for channel_id: {}, share dropped! ❌", m.channel_id);
                         }
+                    } else {
+                        error!("SubmitSharesExtended: channel_id {} not found in extended_channels, share dropped! ❌", m.channel_id);
                     }
                     None
                 });
+
+                // Log validation failures
+                if let Some((Err(ref validation_error), _)) = value {
+                    warn!(
+                        "SubmitSharesExtended: share validation failed for channel_id: {}, sequence_number: {}, error: {:?} ❌",
+                        original_channel_id, original_sequence_number, validation_error
+                    );
+                }
+
                 if let Some((Ok(_result), _share_accounting)) = value {
                     info!(
                         "SubmitSharesExtended: valid share, forwarding it to upstream | channel_id: {}, sequence_number: {} ☑️",
@@ -489,16 +504,19 @@ impl ChannelManager {
                             .channel_manager_data
                             .super_safe_lock(|c| c.upstream_extended_channel.is_some())
                     {
-                        let upstream_extended_channel_id =
-                            self.channel_manager_data.super_safe_lock(|c| {
-                                let upstream_extended_channel = c
-                                    .upstream_extended_channel
-                                    .as_ref()
-                                    .unwrap()
-                                    .read()
-                                    .unwrap();
-                                upstream_extended_channel.get_channel_id()
-                            });
+                        let upstream_extended_channel_id = match self
+                            .channel_manager_data
+                            .super_safe_lock(|c| {
+                                c.upstream_extended_channel.as_ref().and_then(|ch| {
+                                    ch.read().ok().map(|channel| channel.get_channel_id())
+                                })
+                            }) {
+                            Some(id) => id,
+                            None => {
+                                error!("SubmitSharesExtended: upstream_extended_channel not available or RwLock poisoned, share dropped! ❌");
+                                return Ok(());
+                            }
+                        };
 
                         // In aggregated mode, use a single sequence counter for all valid shares
                         m.sequence_number = self.channel_manager_data.super_safe_lock(|c| {
@@ -508,18 +526,25 @@ impl ChannelManager {
                         // upstream prefix + translator proxy prefix)
                         let downstream_extranonce_prefix =
                             self.channel_manager_data.super_safe_lock(|c| {
-                                c.extended_channels.get(&m.channel_id).map(|channel| {
-                                    channel.read().unwrap().get_extranonce_prefix().clone()
+                                c.extended_channels.get(&m.channel_id).and_then(|channel| {
+                                    channel
+                                        .read()
+                                        .ok()
+                                        .map(|ch| ch.get_extranonce_prefix().clone())
                                 })
                             });
                         // Get the length of the upstream prefix (range0)
-                        let range0_len = self.channel_manager_data.super_safe_lock(|c| {
+                        let range0_len = match self.channel_manager_data.super_safe_lock(|c| {
                             c.extranonce_prefix_factory
                                 .as_ref()
-                                .unwrap()
-                                .safe_lock(|e| e.get_range0_len())
-                                .unwrap()
-                        });
+                                .and_then(|factory| factory.safe_lock(|e| e.get_range0_len()).ok())
+                        }) {
+                            Some(len) => len,
+                            None => {
+                                error!("SubmitSharesExtended: extranonce_prefix_factory not available, share dropped! ❌");
+                                return Ok(());
+                            }
+                        };
                         if let Some(downstream_extranonce_prefix) = downstream_extranonce_prefix {
                             // Skip the upstream prefix (range0) and take the remaining
                             // bytes (translator proxy prefix)
@@ -553,13 +578,20 @@ impl ChannelManager {
                             // We need to adjust the extranonce for this channel
                             let downstream_extranonce_prefix =
                                 self.channel_manager_data.super_safe_lock(|c| {
-                                    c.extended_channels.get(&m.channel_id).map(|channel| {
-                                        channel.read().unwrap().get_extranonce_prefix().clone()
+                                    c.extended_channels.get(&m.channel_id).and_then(|channel| {
+                                        channel
+                                            .read()
+                                            .ok()
+                                            .map(|ch| ch.get_extranonce_prefix().clone())
                                     })
                                 });
-                            let range0_len = factory
-                                .safe_lock(|e| e.get_range0_len())
-                                .expect("Failed to access extranonce factory range - this should not happen");
+                            let range0_len = match factory.safe_lock(|e| e.get_range0_len()) {
+                                Ok(len) => len,
+                                Err(e) => {
+                                    error!("SubmitSharesExtended: Failed to access extranonce factory: {:?}, share dropped! ❌", e);
+                                    return Ok(());
+                                }
+                            };
                             if let Some(downstream_extranonce_prefix) = downstream_extranonce_prefix
                             {
                                 // Skip the upstream prefix (range0) and take the remaining

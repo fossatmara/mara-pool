@@ -733,7 +733,13 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                             version: msg.version,
                         }));
 
-                        error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-job-id ❌", downstream_id, channel_id, msg.sequence_number);
+                        // Enhanced logging for debugging invalid-job-id errors
+                        let active_job_id = standard_channel.get_active_job().map(|j| j.get_job_id());
+                        let past_job_ids: Vec<u32> = standard_channel.get_past_jobs().keys().copied().collect();
+                        error!(
+                            "SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-job-id | submitted_job_id: {}, active_job_id: {:?}, past_job_ids: {:?} ❌",
+                            downstream_id, channel_id, msg.sequence_number, msg.job_id, active_job_id, past_job_ids
+                        );
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
                             sequence_number: msg.sequence_number,
@@ -764,7 +770,13 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                             version: msg.version,
                         }));
 
-                        error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: difficulty-too-low ❌", downstream_id, channel_id, msg.sequence_number);
+                        // Enhanced logging for debugging difficulty-too-low errors
+                        let channel_target_difficulty = target.difficulty_float();
+                        let nominal_hashrate = standard_channel.get_nominal_hashrate();
+                        error!(
+                            "SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: difficulty-too-low | channel_target_difficulty: {:.2}, nominal_hashrate: {:.2}, job_id: {} ❌",
+                            downstream_id, channel_id, msg.sequence_number, channel_target_difficulty, nominal_hashrate, msg.job_id
+                        );
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
                             sequence_number: msg.sequence_number,
@@ -1032,7 +1044,13 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                             version: msg.version,
                         }));
 
-                        error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-job-id ❌", downstream_id, channel_id, msg.sequence_number);
+                        // Enhanced logging for debugging invalid-job-id errors
+                        let active_job_id = extended_channel.get_active_job().map(|j| j.get_job_id());
+                        let past_job_ids: Vec<u32> = extended_channel.get_past_jobs().keys().copied().collect();
+                        error!(
+                            "SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-job-id | submitted_job_id: {}, active_job_id: {:?}, past_job_ids: {:?} ❌",
+                            downstream_id, channel_id, msg.sequence_number, msg.job_id, active_job_id, past_job_ids
+                        );
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
                             sequence_number: msg.sequence_number,
@@ -1063,7 +1081,13 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                             version: msg.version,
                         }));
 
-                        error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: difficulty-too-low ❌", downstream_id, channel_id, msg.sequence_number);
+                        // Enhanced logging for debugging difficulty-too-low errors
+                        let channel_target_difficulty = target.difficulty_float();
+                        let nominal_hashrate = extended_channel.get_nominal_hashrate();
+                        error!(
+                            "SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: difficulty-too-low | channel_target_difficulty: {:.2}, nominal_hashrate: {:.2}, job_id: {} ❌",
+                            downstream_id, channel_id, msg.sequence_number, channel_target_difficulty, nominal_hashrate, msg.job_id
+                        );
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
                             sequence_number: msg.sequence_number,

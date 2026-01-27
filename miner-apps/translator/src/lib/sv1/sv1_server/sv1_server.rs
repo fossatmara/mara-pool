@@ -340,10 +340,15 @@ impl Sv1Server {
         if self.config.downstream_difficulty_config.enable_vardiff {
             self.sv1_server_data.safe_lock(|v| {
                 if let Some(vardiff_state) = v.vardiff.get(&message.downstream_id) {
-                    vardiff_state
-                        .write()
-                        .unwrap()
-                        .increment_shares_since_last_update();
+                    match vardiff_state.write() {
+                        Ok(mut state) => state.increment_shares_since_last_update(),
+                        Err(e) => {
+                            error!(
+                                "Failed to acquire vardiff write lock for downstream {}: {:?}",
+                                message.downstream_id, e
+                            );
+                        }
+                    }
                 }
             })?;
         }
@@ -368,17 +373,30 @@ impl Sv1Server {
         // Only add TLV fields with user identity in non-aggregated mode
         let tlv_fields = if !self.config.aggregate_channels {
             let user_identity_string = self.sv1_server_data.super_safe_lock(|d| {
-                d.downstreams
-                    .get(&message.downstream_id)
-                    .unwrap()
-                    .downstream_data
-                    .super_safe_lock(|d| d.user_identity.clone())
+                d.downstreams.get(&message.downstream_id).map(|ds| {
+                    ds.downstream_data
+                        .super_safe_lock(|d| d.user_identity.clone())
+                })
             });
-            UserIdentity::new(&user_identity_string)
-                .unwrap()
-                .to_tlv()
-                .ok()
-                .map(|tlv| vec![tlv])
+            match user_identity_string {
+                Some(identity) => match UserIdentity::new(&identity) {
+                    Ok(user_identity) => user_identity.to_tlv().ok().map(|tlv| vec![tlv]),
+                    Err(e) => {
+                        warn!(
+                            "Failed to create UserIdentity for downstream {}: {:?}",
+                            message.downstream_id, e
+                        );
+                        None
+                    }
+                },
+                None => {
+                    warn!(
+                        "Downstream {} not found during share submission, skipping TLV",
+                        message.downstream_id
+                    );
+                    None
+                }
+            }
         } else {
             None
         };
