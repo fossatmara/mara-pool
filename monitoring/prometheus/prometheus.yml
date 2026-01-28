@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+  external_labels:
+    environment: local
+
+scrape_configs:
+  # mara-pool Pool (SV2) monitoring endpoint
+  - job_name: mara-pool-pool
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:9091
+        labels:
+          app: pool
+          environment: local
+
+  # mara-pool Translator (SV1 -> SV2) monitoring endpoint
+  - job_name: mara-pool-tproxy
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:9092
+        labels:
+          app: tproxy
+          environment: local
