@@ -16,6 +16,7 @@ use stratum_apps::{
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
     network_helpers::noise_stream::NoiseTcpStream,
     stratum_core::{
+        binary_sv2::GetSize,
         bitcoin::{Amount, TxOut},
         channels_sv2::{
             server::{
@@ -491,6 +492,14 @@ impl ChannelManager {
     // - If the frame contains any unsupported message type, an error is returned.
     async fn handle_template_provider_message(&mut self) -> PoolResult<(), error::ChannelManager> {
         if let Ok(message) = self.channel_manager_channel.tp_receiver.recv().await {
+            if let Some(ref metrics) = self.event_metrics {
+                let msg_type = template_distribution_message_type(&message);
+                metrics.inc_messages(stratum_apps::monitoring::direction::SERVER, msg_type);
+                metrics.add_bytes(
+                    stratum_apps::monitoring::direction::SERVER,
+                    template_distribution_message_size_bytes(&message),
+                );
+            }
             self.handle_template_distribution_message_from_server(None, message, None)
                 .await?;
         }
@@ -504,6 +513,16 @@ impl ChannelManager {
             .recv()
             .await
         {
+            // Increment message counter
+            if let Some(ref metrics) = self.event_metrics {
+                let msg_type = mining_message_type(&message);
+                metrics.inc_messages(stratum_apps::monitoring::direction::CLIENT, msg_type);
+                metrics.add_bytes(
+                    stratum_apps::monitoring::direction::CLIENT,
+                    mining_message_size_bytes(&message),
+                );
+            }
+
             let tlv_slice = tlv_fields.as_deref();
             self.handle_mining_message_from_client(Some(downstream_id), message, tlv_slice)
                 .await?;
@@ -660,7 +679,9 @@ impl ChannelManager {
             });
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         info!("Vardiff update cycle complete");
@@ -716,9 +737,21 @@ impl<'a> From<(DownstreamId, Mining<'a>)> for RouteMessageTo<'a> {
 }
 
 impl RouteMessageTo<'_> {
-    pub async fn forward(self, channel_manager_channel: &ChannelManagerChannel) {
+    pub async fn forward(
+        self,
+        channel_manager_channel: &ChannelManagerChannel,
+        event_metrics: Option<&stratum_apps::monitoring::event_metrics::EventMetrics>,
+    ) {
         match self {
             RouteMessageTo::Downstream((downstream_id, message)) => {
+                if let Some(metrics) = event_metrics {
+                    let msg_type = mining_message_type(&message);
+                    metrics.inc_messages(stratum_apps::monitoring::direction::CLIENT, msg_type);
+                    metrics.add_bytes(
+                        stratum_apps::monitoring::direction::CLIENT,
+                        mining_message_size_bytes(&message),
+                    );
+                }
                 _ = channel_manager_channel.downstream_sender.send((
                     downstream_id,
                     message.into_static(),
@@ -726,6 +759,14 @@ impl RouteMessageTo<'_> {
                 ));
             }
             RouteMessageTo::TemplateProvider(message) => {
+                if let Some(metrics) = event_metrics {
+                    let msg_type = template_distribution_message_type(&message);
+                    metrics.inc_messages(stratum_apps::monitoring::direction::SERVER, msg_type);
+                    metrics.add_bytes(
+                        stratum_apps::monitoring::direction::SERVER,
+                        template_distribution_message_size_bytes(&message),
+                    );
+                }
                 _ = channel_manager_channel
                     .tp_sender
                     .send(message.into_static())
@@ -733,4 +774,20 @@ impl RouteMessageTo<'_> {
             }
         }
     }
+}
+
+fn mining_message_type(msg: &Mining<'_>) -> &'static str {
+    stratum_apps::monitoring::msg_type_mapping::mining_msg_type(msg)
+}
+
+fn mining_message_size_bytes(msg: &Mining<'_>) -> u64 {
+    msg.get_size() as u64
+}
+
+fn template_distribution_message_type(msg: &TemplateDistribution<'_>) -> &'static str {
+    stratum_apps::monitoring::msg_type_mapping::template_distribution_msg_type(msg)
+}
+
+fn template_distribution_message_size_bytes(msg: &TemplateDistribution<'_>) -> u64 {
+    msg.get_size() as u64
 }

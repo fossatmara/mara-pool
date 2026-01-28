@@ -21,6 +21,9 @@ use stratum_apps::{
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
+type SharedEventMetrics =
+    Arc<Mutex<Option<Arc<stratum_apps::monitoring::event_metrics::EventMetrics>>>>;
+
 /// Represents a downstream SV1 miner connection.
 ///
 /// This struct manages the state and communication for a single SV1 miner connected
@@ -34,10 +37,11 @@ use tracing::{debug, error, info, warn};
 /// Each downstream connection runs in its own async task that processes messages
 /// from both the miner and the server, ensuring proper message ordering and
 /// handling connection-specific state.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Downstream {
     pub downstream_data: Arc<Mutex<DownstreamData>>,
     pub downstream_channel_state: DownstreamChannelState,
+    pub event_metrics: SharedEventMetrics,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -56,6 +60,7 @@ impl Downstream {
         )>,
         target: Target,
         hashrate: Option<Hashrate>,
+        event_metrics: SharedEventMetrics,
     ) -> Self {
         let downstream_data = Arc::new(Mutex::new(DownstreamData::new(
             downstream_id,
@@ -71,6 +76,7 @@ impl Downstream {
         Self {
             downstream_data,
             downstream_channel_state,
+            event_metrics,
         }
     }
 
@@ -259,6 +265,14 @@ impl Downstream {
 
                                 if let Some(set_difficulty_msg) = &pending_set_difficulty {
                                     debug!("Down: Sending pending mining.set_difficulty before mining.notify");
+                                    self.event_metrics.super_safe_lock(|m| {
+                                        if let Some(ref metrics) = m.as_ref() {
+                                            metrics.inc_sv1_messages(
+                                                stratum_apps::monitoring::direction::SERVER,
+                                                stratum_apps::monitoring::event_metrics::sv1_msg_type::MINING_SET_DIFFICULTY,
+                                            );
+                                        }
+                                    });
                                     self.downstream_channel_state
                                         .downstream_sv1_sender
                                         .send(set_difficulty_msg.clone())
@@ -274,6 +288,14 @@ impl Downstream {
 
                                 if let Some(notify) = notify_opt {
                                     debug!("Down: Sending mining.notify");
+                                    self.event_metrics.super_safe_lock(|m| {
+                                        if let Some(ref metrics) = m.as_ref() {
+                                            metrics.inc_sv1_messages(
+                                                stratum_apps::monitoring::direction::SERVER,
+                                                stratum_apps::monitoring::event_metrics::sv1_msg_type::MINING_NOTIFY,
+                                            );
+                                        }
+                                    });
                                     self.downstream_channel_state
                                         .downstream_sv1_sender
                                         .send(notify.into())

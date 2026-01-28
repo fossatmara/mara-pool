@@ -8,6 +8,8 @@ use tokio::{
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::{error, trace, warn};
 
+use crate::monitoring::event_metrics::EventMetrics;
+
 /// Represents a connection between two roles communicating using SV1 protocol.
 ///
 /// This struct can be used to read and write messages to the other side of the connection.  The
@@ -25,6 +27,9 @@ struct ConnectionState {
     sender_outgoing: Sender<json_rpc::Message>,
     receiver_incoming: Receiver<json_rpc::Message>,
     sender_incoming: Sender<json_rpc::Message>,
+    event_metrics: Option<std::sync::Arc<EventMetrics>>,
+    incoming_direction: &'static str,
+    outgoing_direction: &'static str,
 }
 
 impl ConnectionState {
@@ -33,12 +38,18 @@ impl ConnectionState {
         sender_outgoing: Sender<json_rpc::Message>,
         receiver_incoming: Receiver<json_rpc::Message>,
         sender_incoming: Sender<json_rpc::Message>,
+        event_metrics: Option<std::sync::Arc<EventMetrics>>,
+        incoming_direction: &'static str,
+        outgoing_direction: &'static str,
     ) -> Self {
         Self {
             receiver_incoming,
             receiver_outgoing,
             sender_incoming,
             sender_outgoing,
+            event_metrics,
+            incoming_direction,
+            outgoing_direction,
         }
     }
 
@@ -54,6 +65,15 @@ const MAX_LINE_LENGTH: usize = 1 << 16;
 
 impl ConnectionSV1 {
     pub async fn new(stream: TcpStream) -> Self {
+        Self::new_with_event_metrics(stream, None, "client", "server").await
+    }
+
+    pub async fn new_with_event_metrics(
+        stream: TcpStream,
+        event_metrics: Option<std::sync::Arc<EventMetrics>>,
+        incoming_direction: &'static str,
+        outgoing_direction: &'static str,
+    ) -> Self {
         let (read_half, write_half) = stream.into_split();
         let (sender_incoming, receiver_incoming) = unbounded();
         let (sender_outgoing, receiver_outgoing) = unbounded();
@@ -66,15 +86,18 @@ impl ConnectionSV1 {
             sender_outgoing.clone(),
             receiver_incoming.clone(),
             sender_incoming.clone(),
+            event_metrics,
+            incoming_direction,
+            outgoing_direction,
         );
 
         tokio::spawn(async move {
             tokio::select! {
-                _ = Self::run_reader(buffer_read_half, sender_incoming.clone()) => {
+                _ = Self::run_reader(buffer_read_half, sender_incoming.clone(), connection_state.event_metrics.clone(), connection_state.incoming_direction) => {
                     trace!("Reader task exited. Closing writer sender.");
                     connection_state.close();
                 }
-                _ = Self::run_writer(buffer_write_half, receiver_outgoing.clone()) => {
+                _ = Self::run_writer(buffer_write_half, receiver_outgoing.clone(), connection_state.event_metrics.clone(), connection_state.outgoing_direction) => {
                     trace!("Writer task exited. Closing reader sender.");
                     connection_state.close();
                 }
@@ -90,12 +113,19 @@ impl ConnectionSV1 {
     async fn run_reader(
         reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
         sender: Sender<json_rpc::Message>,
+        event_metrics: Option<std::sync::Arc<EventMetrics>>,
+        direction: &'static str,
     ) {
         let mut lines = FramedRead::new(reader, LinesCodec::new_with_max_length(MAX_LINE_LENGTH));
         while let Some(result) = lines.next().await {
             match result {
                 Ok(line) => match serde_json::from_str::<json_rpc::Message>(&line) {
                     Ok(msg) => {
+                        // `line` excludes the trailing newline delimiter
+                        // bytes = line + "\n"
+                        if let Some(ref metrics) = event_metrics {
+                            metrics.add_sv1_bytes(direction, (line.len() + 1) as u64);
+                        }
                         if sender.send(msg).await.is_err() {
                             warn!("Receiver dropped, stopping reader");
                             break;
@@ -116,11 +146,16 @@ impl ConnectionSV1 {
     async fn run_writer(
         mut writer: BufWriter<tokio::net::tcp::OwnedWriteHalf>,
         receiver: Receiver<json_rpc::Message>,
+        event_metrics: Option<std::sync::Arc<EventMetrics>>,
+        direction: &'static str,
     ) {
         while let Ok(msg) = receiver.recv().await {
             match serde_json::to_string(&msg) {
                 Ok(line) => {
                     let data = format!("{line}\n");
+                    if let Some(ref metrics) = event_metrics {
+                        metrics.add_sv1_bytes(direction, data.len() as u64);
+                    }
                     if writer.write_all(data.as_bytes()).await.is_err() {
                         error!("Failed to write to stream");
                         break;

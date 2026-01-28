@@ -247,7 +247,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
         })?;
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         Ok(())
@@ -510,7 +512,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
             })?;
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         Ok(())
@@ -558,9 +562,11 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
 
                 match res {
                     Ok(ShareValidationResult::Valid(share_hash)) => {
-                        // Increment event metrics counter immediately on share acceptance
                         if let Some(ref metrics) = self.event_metrics {
-                            metrics.inc_shares_accepted(stratum_apps::monitoring::direction::CLIENT);
+                            metrics.inc_shares(
+                                stratum_apps::monitoring::direction::CLIENT,
+                                stratum_apps::monitoring::channel_type::STANDARD,
+                            );
                         }
 
                         let share_accounting = standard_channel.get_share_accounting();
@@ -607,6 +613,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesSuccess(success)).into());
                     }
                     Err(ShareValidationError::Invalid) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::Other);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-share ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -620,6 +629,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::Stale) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::StaleShare);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: stale-share ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -632,6 +644,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::InvalidJobId) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::JobNotFound);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-job-id ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -644,6 +659,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::DoesNotMeetTarget) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::InvalidDifficulty);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: difficulty-too-low ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -656,6 +674,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::DuplicateShare) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::DuplicateShare);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: duplicate-share ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -677,7 +698,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
         })?;
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         Ok(())
@@ -745,9 +768,11 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
 
                 match res {
                     Ok(ShareValidationResult::Valid(share_hash)) => {
-                        // Increment event metrics counter immediately on share acceptance
                         if let Some(ref metrics) = self.event_metrics {
-                            metrics.inc_shares_accepted(stratum_apps::monitoring::direction::CLIENT);
+                            metrics.inc_shares(
+                                stratum_apps::monitoring::direction::CLIENT,
+                                stratum_apps::monitoring::channel_type::EXTENDED,
+                            );
                         }
 
                         let share_accounting = extended_channel.get_share_accounting();
@@ -793,6 +818,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesSuccess(success)).into());
                     }
                     Err(ShareValidationError::Invalid) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::Other);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-share ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -805,6 +833,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::Stale) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::StaleShare);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: stale-share ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -817,6 +848,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::InvalidJobId) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::JobNotFound);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: invalid-job-id ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -829,6 +863,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::DoesNotMeetTarget) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::InvalidDifficulty);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: difficulty-too-low ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -841,6 +878,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::DuplicateShare) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::DuplicateShare);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: duplicate-share ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -853,6 +893,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         messages.push((downstream_id, Mining::SubmitSharesError(error)).into());
                     }
                     Err(ShareValidationError::BadExtranonceSize) => {
+                        if let Some(ref metrics) = self.event_metrics {
+                            metrics.inc_shares_rejected(stratum_apps::monitoring::ShareRejectionReason::Other);
+                        }
                         error!("SubmitSharesError: downstream_id: {}, channel_id: {}, sequence_number: {}, error_code: bad-extranonce-size ❌", downstream_id, channel_id, msg.sequence_number);
                         let error = SubmitSharesError {
                             channel_id: msg.channel_id,
@@ -874,7 +917,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
         })?;
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         Ok(())
@@ -1005,7 +1050,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
         })?;
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         Ok(())
@@ -1096,7 +1143,9 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                         })
                 })?;
 
-        message.forward(&self.channel_manager_channel).await;
+        message
+            .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+            .await;
         Ok(())
     }
 }

@@ -7,12 +7,13 @@
 //! ## Consolidated Metrics Design
 //!
 //! Metrics use bounded labels to reduce metric count while preserving topology:
-//! - `stratum_channels{direction,type}` - Channel counts (6 combinations: 3 directions × 2 types)
-//! - `stratum_hashrate{direction}` or `stratum_hashrate{direction,user_identity}` - Hashrate
-//! - `stratum_connections{direction}` - Connection counts (3 combinations)
-//! - `stratum_shares{direction,type}` - Share counts (6 combinations: 3 directions × 2 types)
+//! - `stratum_channels{direction,channel_type}` - Channel counts (4 combinations: 2 directions × 2 types)
+//! - `stratum_hashrate{direction}` - Hashrate by direction (2 combinations)
+//! - `stratum_hashrate_by_user{direction,user_identity}` - Per-user hashrate (unbounded, opt-in)
+//! - `stratum_connections{direction}` - Connection counts (2 combinations)
 //!
-//! Direction values: "server", "client", "sv1_client"
+//! Direction values: "server", "client" (SV2 only)
+//! SV1 metrics use separate `sv1_*` metrics instead of overloading direction.
 //!
 //! This design enables:
 //! - Prometheus recording rules for aggregates
@@ -20,13 +21,14 @@
 //! - API linkage via direction label
 //! - Optional user_identity breakdown (config-controlled)
 
-use prometheus::{GaugeVec, Opts, Registry};
+use prometheus::{Gauge, GaugeVec, Opts, Registry};
 
-/// Direction label values for metrics
+/// Direction label values for SV2 metrics
 pub mod direction {
+    /// Upstream SV2 connection (to pool/JDS)
     pub const SERVER: &str = "server";
+    /// Downstream SV2 connection (from miners)
     pub const CLIENT: &str = "client";
-    pub const SV1_CLIENT: &str = "sv1_client";
 }
 
 /// Channel type label values for metrics
@@ -38,9 +40,11 @@ pub mod channel_type {
 /// Snapshot-based metrics populated from cached monitoring state.
 ///
 /// Uses consolidated metrics with bounded labels:
-/// - `direction`: "server", "client", or "sv1_client"
-/// - `type`: "extended" or "standard" (for channel counts)
-/// - `user_identity`: optional, enabled via config (for hashrate breakdown)
+/// - `direction`: "server" or "client" (SV2 only)
+/// - `channel_type`: "extended" or "standard" (for channel counts)
+///
+/// SV1 metrics are separate gauges (sv1_connections, sv1_hashrate) to avoid
+/// polluting the direction enum with tproxy-specific values.
 ///
 /// This reduces metric count while preserving topology for dashboards and API linkage.
 #[derive(Clone)]
@@ -50,26 +54,33 @@ pub struct SnapshotMetrics {
     /// Whether user_identity labels are enabled (high cardinality)
     pub enable_user_identity_labels: bool,
 
-    // === Consolidated Metrics with Labels ===
-    /// Channel counts by direction and type
-    /// Labels: direction (server|client|sv1_client), type (extended|standard)
-    /// Cardinality: 6 (3 directions × 2 types)
+    // === SV2 Consolidated Metrics with Labels ===
+    /// Channel counts by direction and channel_type
+    /// Labels: direction (server|client), channel_type (extended|standard)
+    /// Cardinality: 4 (2 directions × 2 types)
     pub stratum_channels: Option<GaugeVec>,
 
-    /// Hashrate by direction (and optionally user_identity)
-    /// Labels: direction (server|client|sv1_client), [user_identity]
-    /// Cardinality: 3 without user_identity, unbounded with user_identity
+    /// Hashrate by direction
+    /// Labels: direction (server|client)
+    /// Cardinality: 2
     pub stratum_hashrate: Option<GaugeVec>,
 
+    /// Per-user hashrate (opt-in, high cardinality)
+    /// Labels: direction (server|client), user_identity
+    /// Cardinality: unbounded
+    pub stratum_hashrate_by_user: Option<GaugeVec>,
+
     /// Connection counts by direction
-    /// Labels: direction (server|client|sv1_client)
-    /// Cardinality: 3
+    /// Labels: direction (server|client)
+    /// Cardinality: 2
     pub stratum_connections: Option<GaugeVec>,
 
-    /// Share counts by direction and type
-    /// Labels: direction (server|client|sv1_client), type (extended|standard)
-    /// Cardinality: 6 (3 directions × 2 types)
-    pub stratum_shares: Option<GaugeVec>,
+    // === SV1 Metrics (tproxy only) ===
+    /// SV1 connection count (downstream only)
+    pub sv1_connections: Option<Gauge>,
+
+    /// SV1 hashrate (downstream only)
+    pub sv1_hashrate: Option<Gauge>,
 }
 
 impl SnapshotMetrics {
@@ -78,8 +89,8 @@ impl SnapshotMetrics {
     /// # Arguments
     /// * `enable_server_metrics` - Enable server (upstream) metrics
     /// * `enable_clients_metrics` - Enable client (downstream) metrics
-    /// * `enable_sv1_metrics` - Enable SV1 client metrics
-    /// * `enable_user_identity_labels` - Enable user_identity label on hashrate (high cardinality)
+    /// * `enable_sv1_metrics` - Enable SV1 client metrics (tproxy only)
+    /// * `enable_user_identity_labels` - Enable per-user hashrate metric (high cardinality)
     pub fn new(
         enable_server_metrics: bool,
         enable_clients_metrics: bool,
@@ -88,14 +99,16 @@ impl SnapshotMetrics {
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let registry = Registry::new();
 
-        // Consolidated metrics (registered if any metrics enabled)
-        let enable_consolidated =
-            enable_server_metrics || enable_clients_metrics || enable_sv1_metrics;
+        // SV2 consolidated metrics (registered if server or client metrics enabled)
+        let enable_sv2 = enable_server_metrics || enable_clients_metrics;
 
-        let stratum_channels = if enable_consolidated {
+        let stratum_channels = if enable_sv2 {
             let metric = GaugeVec::new(
-                Opts::new("stratum_channels", "Channel counts by direction and type"),
-                &["direction", "type"],
+                Opts::new(
+                    "stratum_channels",
+                    "Channel counts by direction and channel_type",
+                ),
+                &["direction", "channel_type"],
             )?;
             registry.register(Box::new(metric.clone()))?;
             Some(metric)
@@ -103,16 +116,11 @@ impl SnapshotMetrics {
             None
         };
 
-        // Hashrate metric: labels depend on whether user_identity is enabled
-        let stratum_hashrate = if enable_consolidated {
-            let labels: &[&str] = if enable_user_identity_labels {
-                &["direction", "user_identity"]
-            } else {
-                &["direction"]
-            };
+        // Aggregate hashrate by direction (always enabled if SV2 metrics enabled)
+        let stratum_hashrate = if enable_sv2 {
             let metric = GaugeVec::new(
                 Opts::new("stratum_hashrate", "Hashrate by direction"),
-                labels,
+                &["direction"],
             )?;
             registry.register(Box::new(metric.clone()))?;
             Some(metric)
@@ -120,7 +128,19 @@ impl SnapshotMetrics {
             None
         };
 
-        let stratum_connections = if enable_consolidated {
+        // Per-user hashrate (opt-in, high cardinality)
+        let stratum_hashrate_by_user = if enable_sv2 && enable_user_identity_labels {
+            let metric = GaugeVec::new(
+                Opts::new("stratum_hashrate_by_user", "Per-user hashrate"),
+                &["direction", "user_identity"],
+            )?;
+            registry.register(Box::new(metric.clone()))?;
+            Some(metric)
+        } else {
+            None
+        };
+
+        let stratum_connections = if enable_sv2 {
             let metric = GaugeVec::new(
                 Opts::new("stratum_connections", "Connection counts by direction"),
                 &["direction"],
@@ -131,11 +151,17 @@ impl SnapshotMetrics {
             None
         };
 
-        let stratum_shares = if enable_consolidated {
-            let metric = GaugeVec::new(
-                Opts::new("stratum_shares", "Share counts by direction and type"),
-                &["direction", "type"],
-            )?;
+        // SV1 metrics (tproxy only) - separate gauges, not using direction label
+        let sv1_connections = if enable_sv1_metrics {
+            let metric = Gauge::new("sv1_connections", "SV1 miner connection count")?;
+            registry.register(Box::new(metric.clone()))?;
+            Some(metric)
+        } else {
+            None
+        };
+
+        let sv1_hashrate = if enable_sv1_metrics {
+            let metric = Gauge::new("sv1_hashrate", "SV1 miner hashrate")?;
             registry.register(Box::new(metric.clone()))?;
             Some(metric)
         } else {
@@ -147,14 +173,32 @@ impl SnapshotMetrics {
             enable_user_identity_labels,
             stratum_channels,
             stratum_hashrate,
+            stratum_hashrate_by_user,
             stratum_connections,
-            stratum_shares,
+            sv1_connections,
+            sv1_hashrate,
         })
     }
 
-    // === Helper methods for setting consolidated metrics ===
+    pub fn enable_sv1_metrics(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.sv1_connections.is_none() {
+            let metric = Gauge::new("sv1_connections", "SV1 miner connection count")?;
+            self.registry.register(Box::new(metric.clone()))?;
+            self.sv1_connections = Some(metric);
+        }
 
-    /// Set channel count for a specific direction and type
+        if self.sv1_hashrate.is_none() {
+            let metric = Gauge::new("sv1_hashrate", "SV1 miner hashrate")?;
+            self.registry.register(Box::new(metric.clone()))?;
+            self.sv1_hashrate = Some(metric);
+        }
+
+        Ok(())
+    }
+
+    // === Helper methods for setting SV2 consolidated metrics ===
+
+    /// Set channel count for a specific direction and channel_type
     pub fn set_channels(&self, direction: &str, channel_type: &str, count: f64) {
         if let Some(ref metric) = self.stratum_channels {
             metric
@@ -163,29 +207,20 @@ impl SnapshotMetrics {
         }
     }
 
-    /// Set hashrate for a specific direction.
-    /// If user_identity labels are enabled, use `set_hashrate_with_user` instead.
+    /// Set aggregate hashrate for a specific direction.
     pub fn set_hashrate(&self, direction: &str, hashrate: f64) {
         if let Some(ref metric) = self.stratum_hashrate {
-            if self.enable_user_identity_labels {
-                // When user_identity is enabled, we need to provide it
-                // Use empty string for aggregate hashrate
-                metric.with_label_values(&[direction, ""]).set(hashrate);
-            } else {
-                metric.with_label_values(&[direction]).set(hashrate);
-            }
+            metric.with_label_values(&[direction]).set(hashrate);
         }
     }
 
     /// Set hashrate for a specific direction and user_identity.
     /// Only works when user_identity labels are enabled.
-    pub fn set_hashrate_with_user(&self, direction: &str, user_identity: &str, hashrate: f64) {
-        if let Some(ref metric) = self.stratum_hashrate {
-            if self.enable_user_identity_labels {
-                metric
-                    .with_label_values(&[direction, user_identity])
-                    .set(hashrate);
-            }
+    pub fn set_hashrate_by_user(&self, direction: &str, user_identity: &str, hashrate: f64) {
+        if let Some(ref metric) = self.stratum_hashrate_by_user {
+            metric
+                .with_label_values(&[direction, user_identity])
+                .set(hashrate);
         }
     }
 
@@ -196,12 +231,19 @@ impl SnapshotMetrics {
         }
     }
 
-    /// Set share count for a specific direction and type
-    pub fn set_shares(&self, direction: &str, channel_type: &str, count: f64) {
-        if let Some(ref metric) = self.stratum_shares {
-            metric
-                .with_label_values(&[direction, channel_type])
-                .set(count);
+    // === Helper methods for SV1 metrics (tproxy only) ===
+
+    /// Set SV1 connection count
+    pub fn set_sv1_connections(&self, count: f64) {
+        if let Some(ref metric) = self.sv1_connections {
+            metric.set(count);
+        }
+    }
+
+    /// Set SV1 hashrate
+    pub fn set_sv1_hashrate(&self, hashrate: f64) {
+        if let Some(ref metric) = self.sv1_hashrate {
+            metric.set(hashrate);
         }
     }
 }

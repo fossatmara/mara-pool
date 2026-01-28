@@ -258,11 +258,9 @@ impl MonitoringServer {
         // Update cached monitoring wrapper - this must be used for ALL monitoring references
         let cached = Arc::new(super::snapshot_cache::CachedMonitoring::new(cache.clone()));
 
-        // Re-create metrics with SV1 enabled
-        // Preserve the user_identity_labels setting from the existing metrics
-        let enable_user_identity_labels = self.state.metrics.enable_user_identity_labels;
-        self.state.metrics =
-            SnapshotMetrics::new(has_server, has_clients, true, enable_user_identity_labels)?;
+        // Enable SV1 gauges in the existing registry.
+        // This avoids swapping registries (which would drop all existing counter metrics).
+        self.state.metrics.enable_sv1_metrics()?;
 
         // Update ALL monitoring references to use the new cached wrapper
         // This is critical: the old CachedMonitoring pointed to the old cache
@@ -830,16 +828,18 @@ async fn handle_sv1_client_by_id(
 ///
 /// Collects snapshot-based metrics (gauges) from the cache and event-based metrics
 /// (counters/histograms) from EventMetrics, returning them in Prometheus text format.
+///
+/// Note: Share counts are now tracked as Counters in EventMetrics (stratum_shares_total),
+/// incremented at the point of share acceptance. They are not set here as gauges.
 async fn handle_prometheus_metrics(State(state): State<ServerState>) -> Response {
     // Refresh cache if stale beyond freshness threshold
     state.cache.refresh_if_stale();
 
-    // Clean up stale metrics before repopulating
     // Collect server metrics using consolidated metrics with labels
     if let Some(monitoring) = &state.server_monitoring {
         let summary = monitoring.get_server_summary();
 
-        // Set consolidated channel counts with direction and type labels
+        // Set consolidated channel counts with direction and channel_type labels
         state.metrics.set_channels(
             direction::SERVER,
             channel_type::EXTENDED,
@@ -859,24 +859,14 @@ async fn handle_prometheus_metrics(State(state): State<ServerState>) -> Response
         // Set connection count (server is always 1 if connected)
         state.metrics.set_connections(direction::SERVER, 1.0);
 
-        // Set share counts by type
-        state.metrics.set_shares(
-            direction::SERVER,
-            channel_type::EXTENDED,
-            summary.extended_shares as f64,
-        );
-        state.metrics.set_shares(
-            direction::SERVER,
-            channel_type::STANDARD,
-            summary.standard_shares as f64,
-        );
+        // Note: Shares are tracked as Counters in EventMetrics (stratum_shares_total)
     }
 
     // Collect clients metrics using consolidated metrics with labels
     if let Some(monitoring) = &state.clients_monitoring {
         let summary = monitoring.get_clients_summary();
 
-        // Set consolidated channel counts with direction and type labels
+        // Set consolidated channel counts with direction and channel_type labels
         state.metrics.set_channels(
             direction::CLIENT,
             channel_type::EXTENDED,
@@ -898,44 +888,22 @@ async fn handle_prometheus_metrics(State(state): State<ServerState>) -> Response
             .metrics
             .set_connections(direction::CLIENT, summary.total_clients as f64);
 
-        // Set share counts by type
-        state.metrics.set_shares(
-            direction::CLIENT,
-            channel_type::EXTENDED,
-            summary.extended_shares as f64,
-        );
-        state.metrics.set_shares(
-            direction::CLIENT,
-            channel_type::STANDARD,
-            summary.standard_shares as f64,
-        );
+        // Note: Shares are tracked as Counters in EventMetrics (stratum_shares_total)
     }
 
-    // Collect SV1 client metrics using consolidated metrics with sv1_client direction
+    // Collect SV1 client metrics using separate sv1_* metrics
     if let Some(monitoring) = &state.sv1_monitoring {
         let summary = monitoring.get_sv1_clients_summary();
 
-        // SV1 only has standard channels
-        state.metrics.set_channels(
-            direction::SV1_CLIENT,
-            channel_type::STANDARD,
-            summary.total_clients as f64,
-        );
-
+        // SV1 metrics use separate gauges, not the direction label
         state
             .metrics
-            .set_hashrate(direction::SV1_CLIENT, summary.total_hashrate as f64);
-
+            .set_sv1_connections(summary.total_clients as f64);
         state
             .metrics
-            .set_connections(direction::SV1_CLIENT, summary.total_clients as f64);
+            .set_sv1_hashrate(summary.total_hashrate as f64);
 
-        // SV1 shares are all standard type
-        state.metrics.set_shares(
-            direction::SV1_CLIENT,
-            channel_type::STANDARD,
-            summary.total_shares as f64,
-        );
+        // Note: SV1 shares are tracked as Counter in EventMetrics (sv1_shares_total)
     }
 
     // Encode and return metrics

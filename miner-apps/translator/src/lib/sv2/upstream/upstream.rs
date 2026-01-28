@@ -8,6 +8,7 @@ use crate::{
 use async_channel::{unbounded, Receiver, Sender};
 use std::{net::SocketAddr, sync::Arc};
 use stratum_apps::{
+    custom_mutex::Mutex,
     network_helpers::noise_stream::NoiseTcpStream,
     stratum_core::{
         binary_sv2::Seq064K,
@@ -43,13 +44,17 @@ use tracing::{debug, error, info, warn};
 /// The upstream connection supports automatic failover between multiple
 /// configured upstream servers and implements retry logic for connection
 /// establishment.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Upstream {
     pub upstream_channel_state: UpstreamChannelState,
     /// Extensions that the translator requires (must be supported by server)
     pub required_extensions: Vec<u16>,
     address: SocketAddr,
+    event_metrics: SharedEventMetrics,
 }
+
+type SharedEventMetrics =
+    Arc<Mutex<Option<Arc<stratum_apps::monitoring::event_metrics::EventMetrics>>>>;
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl Upstream {
@@ -82,6 +87,7 @@ impl Upstream {
         shutdown_complete_tx: mpsc::Sender<()>,
         task_manager: Arc<TaskManager>,
         required_extensions: Vec<u16>,
+        event_metrics: SharedEventMetrics,
     ) -> TproxyResult<Self, error::Upstream> {
         let mut shutdown_rx = notify_shutdown.subscribe();
 
@@ -132,6 +138,7 @@ impl Upstream {
                             upstream_channel_state,
                             required_extensions: required_extensions.clone(),
                             address: upstream.addr,
+                            event_metrics,
                         });
                     }
                     Err(e) => {
@@ -321,6 +328,19 @@ impl Upstream {
             )));
         };
 
+        self.event_metrics.super_safe_lock(|m| {
+            if let Some(ref metrics) = m.as_ref() {
+                metrics.inc_messages(
+                    stratum_apps::monitoring::direction::SERVER,
+                    header_msg_type_str(header.ext_type(), header.msg_type()),
+                );
+                metrics.add_bytes(
+                    stratum_apps::monitoring::direction::SERVER,
+                    sv2_frame.encoded_length() as u64,
+                );
+            }
+        });
+
         match protocol_message_type(header.ext_type(), header.msg_type()) {
             MessageType::Common => {
                 info!(
@@ -416,6 +436,22 @@ impl Upstream {
                         match result {
                             Ok(sv2_frame) => {
                                 debug!("Upstream: sending sv2 frame from channel manager: {:?}", sv2_frame);
+
+                                if let Some(header) = sv2_frame.get_header() {
+                                    self.event_metrics.super_safe_lock(|m| {
+                                        if let Some(ref metrics) = m.as_ref() {
+                                            metrics.inc_messages(
+                                                stratum_apps::monitoring::direction::SERVER,
+                                                header_msg_type_str(header.ext_type(), header.msg_type()),
+                                            );
+                                            metrics.add_bytes(
+                                                stratum_apps::monitoring::direction::SERVER,
+                                                sv2_frame.encoded_length() as u64,
+                                            );
+                                        }
+                                    });
+                                }
+
                                 if let Err(e) = self
                                     .upstream_channel_state
                                     .upstream_sender
@@ -467,6 +503,21 @@ impl Upstream {
         let message = AnyMessage::Mining(message);
         let sv2_frame: Sv2Frame = message.try_into().map_err(TproxyError::shutdown)?;
 
+        if let Some(header) = sv2_frame.get_header() {
+            self.event_metrics.super_safe_lock(|m| {
+                if let Some(ref metrics) = m.as_ref() {
+                    metrics.inc_messages(
+                        stratum_apps::monitoring::direction::SERVER,
+                        header_msg_type_str(header.ext_type(), header.msg_type()),
+                    );
+                    metrics.add_bytes(
+                        stratum_apps::monitoring::direction::SERVER,
+                        sv2_frame.encoded_length() as u64,
+                    );
+                }
+            });
+        }
+
         self.upstream_channel_state
             .upstream_sender
             .send(sv2_frame)
@@ -511,4 +562,8 @@ impl Upstream {
             device_id,
         })
     }
+}
+
+fn header_msg_type_str(ext_type: u16, msg_type: u8) -> &'static str {
+    stratum_apps::monitoring::msg_type_mapping::header_to_msg_type(ext_type, msg_type)
 }

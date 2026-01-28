@@ -128,7 +128,9 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
         })?;
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         Ok(())
@@ -245,7 +247,9 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
         })?;
 
         for message in messages {
-            message.forward(&self.channel_manager_channel).await;
+            message
+                .forward(&self.channel_manager_channel, self.event_metrics.as_deref())
+                .await;
         }
 
         Ok(())

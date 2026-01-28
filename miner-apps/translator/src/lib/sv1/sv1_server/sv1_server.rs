@@ -11,6 +11,9 @@ use crate::{
     },
     utils::ShutdownMessage,
 };
+
+type SharedEventMetrics =
+    Arc<Mutex<Option<Arc<stratum_apps::monitoring::event_metrics::EventMetrics>>>>;
 use async_channel::{Receiver, Sender};
 use dashmap::DashMap;
 use std::{
@@ -67,6 +70,7 @@ pub struct Sv1Server {
     pub(crate) shares_per_minute: SharesPerMinute,
     pub(crate) listener_addr: SocketAddr,
     pub(crate) config: TranslatorConfig,
+    pub(crate) event_metrics: SharedEventMetrics,
     pub(crate) sequence_counter: Arc<AtomicU32>,
     pub(crate) miner_counter: Arc<AtomicU32>,
     pub(crate) keepalive_job_id_counter: Arc<AtomicU32>,
@@ -110,6 +114,7 @@ impl Sv1Server {
             config,
             listener_addr,
             shares_per_minute,
+            event_metrics: Arc::new(Mutex::new(None)),
             miner_counter: Arc::new(AtomicU32::new(0)),
             sequence_counter: Arc::new(AtomicU32::new(0)),
             keepalive_job_id_counter: Arc::new(AtomicU32::new(0)),
@@ -119,6 +124,16 @@ impl Sv1Server {
             request_id_to_downstream_id: Arc::new(DashMap::new()),
             vardiff: Arc::new(DashMap::new()),
         }
+    }
+
+    pub fn with_event_metrics(
+        self,
+        metrics: Arc<stratum_apps::monitoring::event_metrics::EventMetrics>,
+    ) -> Self {
+        self.event_metrics.super_safe_lock(|slot| {
+            *slot = Some(metrics);
+        });
+        self
     }
 
     /// Starts the SV1 server and begins accepting connections.
@@ -239,7 +254,10 @@ impl Sv1Server {
                         match result {
                             Ok((stream, addr)) => {
                                 info!("New SV1 downstream connection from {}", addr);
-                                let connection = ConnectionSV1::new(stream).await;
+                                let event_metrics = self.event_metrics.super_safe_lock(|m| m.clone());
+                                let connection =
+                                    ConnectionSV1::new_with_event_metrics(stream, event_metrics, "client", "server")
+                                        .await;
                                 let downstream_id = self.downstream_id_factory.fetch_add(1, Ordering::Relaxed);
                                 let downstream = Downstream::new(
                                     downstream_id,
@@ -249,6 +267,7 @@ impl Sv1Server {
                                     self.sv1_server_channel_state.sv1_server_to_downstream_sender.clone(),
                                     first_target,
                                     Some(self.config.downstream_difficulty_config.min_individual_miner_hashrate),
+                                    self.event_metrics.clone(),
                                 );
                                 // vardiff initialization (only if enabled)
                                 self.downstreams.insert(downstream_id, downstream.clone());

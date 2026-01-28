@@ -17,6 +17,12 @@ use stratum_apps::{task_manager::TaskManager, utils::types::Sv2Frame};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
+type SharedEventMetrics = Arc<
+    stratum_apps::custom_mutex::Mutex<
+        Option<Arc<stratum_apps::monitoring::event_metrics::EventMetrics>>,
+    >,
+>;
+
 pub use stratum_apps::stratum_core::sv1_api::server_to_client;
 
 use config::TranslatorConfig;
@@ -76,6 +82,9 @@ impl TranslatorSv2 {
         let (sv1_server_to_channel_manager_sender, sv1_server_to_channel_manager_receiver) =
             unbounded();
 
+        let event_metrics: SharedEventMetrics =
+            Arc::new(stratum_apps::custom_mutex::Mutex::new(None));
+
         debug!("All inter-subsystem channels initialized");
 
         let mut upstream_addresses = self
@@ -114,6 +123,7 @@ impl TranslatorSv2 {
                 task_manager.clone(),
                 sv1_server.clone(),
                 self.config.required_extensions.clone(),
+                event_metrics.clone(),
             )
             .await
         {
@@ -160,9 +170,20 @@ impl TranslatorSv2 {
                                                 * handled separately) */
                 std::time::Duration::from_secs(self.config.monitoring_cache_refresh_secs()),
             )
-            .expect("Failed to initialize monitoring server")
-            .with_sv1_monitoring(Arc::new(sv1_server.clone())) // SV1 client connections
-            .expect("Failed to add SV1 monitoring");
+            .expect("Failed to initialize monitoring server");
+
+            // Wire event metrics into upstream + sv1 components
+            let metrics = monitoring_server.event_metrics();
+            event_metrics.super_safe_lock(|slot| {
+                *slot = Some(metrics.clone());
+            });
+
+            // Pass event metrics to SV1 server so it can increment SV1 counters
+            let sv1_server = sv1_server.clone().with_event_metrics(metrics);
+
+            let monitoring_server = monitoring_server
+                .with_sv1_monitoring(Arc::new(sv1_server)) // SV1 client connections
+                .expect("Failed to add SV1 monitoring");
 
             // Create shutdown signal that waits for ShutdownAll
             let mut notify_shutdown_monitoring = notify_shutdown.subscribe();
@@ -225,6 +246,7 @@ impl TranslatorSv2 {
                                     task_manager.clone(),
                                     sv1_server.clone(),
                                     self.config.required_extensions.clone(),
+                                    event_metrics.clone(),
                                 ).await {
                                     error!("Couldn't perform fallback, shutting system down: {e:?}");
                                     let _ = notify_shutdown.send(ShutdownMessage::ShutdownAll);
@@ -278,6 +300,7 @@ impl TranslatorSv2 {
         task_manager: Arc<TaskManager>,
         sv1_server_instance: Sv1Server,
         required_extensions: Vec<u16>,
+        event_metrics: SharedEventMetrics,
     ) -> Result<(), TproxyErrorKind> {
         const MAX_RETRIES: usize = 3;
         let upstream_len = upstreams.len();
@@ -310,6 +333,7 @@ impl TranslatorSv2 {
                     shutdown_complete_tx.clone(),
                     task_manager.clone(),
                     required_extensions.clone(),
+                    event_metrics.clone(),
                 )
                 .await
                 {
@@ -365,6 +389,7 @@ async fn try_initialize_upstream(
     shutdown_complete_tx: mpsc::Sender<()>,
     task_manager: Arc<TaskManager>,
     required_extensions: Vec<u16>,
+    event_metrics: SharedEventMetrics,
 ) -> Result<(), TproxyErrorKind> {
     let upstream = Upstream::new(
         upstream_addr,
@@ -374,6 +399,7 @@ async fn try_initialize_upstream(
         shutdown_complete_tx.clone(),
         task_manager.clone(),
         required_extensions,
+        event_metrics,
     )
     .await?;
 

@@ -12,6 +12,7 @@
 pub mod client;
 pub mod event_metrics;
 pub mod http_server;
+pub mod msg_type_mapping;
 pub mod server;
 pub mod snapshot_cache;
 pub mod snapshot_metrics;
@@ -21,7 +22,7 @@ pub use client::{
     ClientInfo, ClientMetadata, ClientsMonitoring, ClientsSummary, ExtendedChannelInfo,
     StandardChannelInfo,
 };
-pub use event_metrics::{direction, ShareRejectionReason};
+pub use event_metrics::{direction, msg_type, ShareRejectionReason};
 pub use http_server::MonitoringServer;
 pub use server::{
     ServerExtendedChannelInfo, ServerInfo, ServerMonitoring, ServerStandardChannelInfo,

@@ -21,6 +21,15 @@ impl IsServer<'static> for Sv1Server {
     ) -> (Option<server_to_client::VersionRollingParams>, Option<bool>) {
         let downstream_id = client_id.expect("Downstream id should exist");
 
+        self.event_metrics.super_safe_lock(|m| {
+            if let Some(ref metrics) = m.as_ref() {
+                metrics.inc_sv1_messages(
+                    stratum_apps::monitoring::direction::CLIENT,
+                    stratum_apps::monitoring::event_metrics::sv1_msg_type::MINING_CONFIGURE,
+                );
+            }
+        });
+
         info!("Received mining.configure from SV1 downstream");
         debug!(
             "Downstream {downstream_id}: mining.configure = {:?}",
@@ -67,6 +76,15 @@ impl IsServer<'static> for Sv1Server {
         info!("Received mining.subscribe from Sv1 downstream");
         debug!("Down: Handling mining.subscribe: {:?}", request);
 
+        self.event_metrics.super_safe_lock(|m| {
+            if let Some(ref metrics) = m.as_ref() {
+                metrics.inc_sv1_messages(
+                    stratum_apps::monitoring::direction::CLIENT,
+                    stratum_apps::monitoring::event_metrics::sv1_msg_type::MINING_SUBSCRIBE,
+                );
+            }
+        });
+
         let set_difficulty_sub = (
             "mining.set_difficulty".to_string(),
             downstream_id.to_string(),
@@ -86,6 +104,15 @@ impl IsServer<'static> for Sv1Server {
         request: &client_to_server::Authorize,
     ) -> bool {
         let downstream_id = client_id.expect("Downstream id should exist");
+
+        self.event_metrics.super_safe_lock(|m| {
+            if let Some(ref metrics) = m.as_ref() {
+                metrics.inc_sv1_messages(
+                    stratum_apps::monitoring::direction::CLIENT,
+                    stratum_apps::monitoring::event_metrics::sv1_msg_type::MINING_AUTHORIZE,
+                );
+            }
+        });
         info!("Received mining.authorize from Sv1 downstream {downstream_id}");
         debug!("Down: Handling mining.authorize: {:?}", request);
         true
@@ -97,6 +124,15 @@ impl IsServer<'static> for Sv1Server {
         request: &client_to_server::Submit<'static>,
     ) -> bool {
         let downstream_id = client_id.expect("Downstream id should exist");
+
+        self.event_metrics.super_safe_lock(|m| {
+            if let Some(ref metrics) = m.as_ref() {
+                metrics.inc_sv1_messages(
+                    stratum_apps::monitoring::direction::CLIENT,
+                    stratum_apps::monitoring::event_metrics::sv1_msg_type::MINING_SUBMIT,
+                );
+            }
+        });
 
         let downstream = self
             .downstreams
@@ -161,6 +197,12 @@ impl IsServer<'static> for Sv1Server {
                 error!("Invalid share for channel id: {}", channel_id);
                 return false;
             }
+
+            self.event_metrics.super_safe_lock(|m| {
+                if let Some(ref metrics) = m.as_ref() {
+                    metrics.inc_sv1_shares();
+                }
+            });
 
             data.pending_share.replace(Some(SubmitShareWithChannelId {
                 channel_id,
